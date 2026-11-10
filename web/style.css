@@ -3,75 +3,113 @@
 :root {
   color-scheme: light;
 
-  --plane:        #f9f9f7;
-  --surface-1:    #fcfcfb;
-  --ink-1:        #0b0b0b;
-  --ink-2:        #52514e;
-  --ink-muted:    #898781;
-  --grid:         #e1e0d9;
-  --axis:         #c3c2b7;
-  --ring:         rgba(11, 11, 11, 0.10);
-  --wash:         rgba(11, 11, 11, 0.04);
-  --good:         #0ca30c;
-  --warning:      #fab219;
-  --critical:     #d03b3b;
+  /* A sky, because the subject is time passing on a machine that is yours.
+     It is a real gradient with real weather in it: the top band is blue
+     enough that a white cloud is visible against it, and it pales towards
+     the bottom so the figures you actually read sit on near-white. */
+  --sky-high:     #b9d7f2;
+  --sky-mid:      #d9e9f7;
+  --plane:        #eaf2fa;
+  --plane-2:      #dfecf7;
+  --cloud:        rgba(255, 255, 255, 1);
+  --surface-1:    #ffffff;
+  --ink-1:        #152231;
+  --ink-2:        #4d6076;
+  --ink-muted:    #7b8ea3;
+  --grid:         #d9e5f1;
+  --axis:         #aec3d7;
+  --ring:         rgba(21, 60, 110, 0.14);
+  --wash:         rgba(21, 60, 110, 0.05);
+  --accent:       #2f7fd1;
+  --accent-ink:   #ffffff;
+  --accent-soft:  #dcebfb;
+  --good:         #0e9f6e;
+  --warning:      #d99000;
+  --critical:     #d64545;
 
-  --s1: #2a78d6;
-  --s2: #eb6834;
-  --s3: #1baf7a;
-  --s4: #eda100;
-  --s5: #e87ba4;
-  --s6: #008300;
-  --s7: #6250d6;
-  --s8: #e34948;
+  /* Eight categorical hues held inside one chroma band, so no category
+     shouts over its neighbours, and spaced far enough apart in hue to stay
+     separable inside a stacked bar. Tuned against the sky rather than
+     picked off a wheel. */
+  --s1: #2f74c0;
+  --s2: #df7a40;
+  --s3: #1b9c86;
+  --s4: #c9971f;
+  --s5: #cf6f9b;
+  --s6: #5d9c3c;
+  --s7: #6a62c8;
+  --s8: #cc5a52;
 
-  --radius: 10px;
+  --radius: 12px;
   --gutter: 16px;
   --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* Durations and clock times only. On a time tracker the figures are the
+     content, so they get their own face and align in a column. */
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) {
     color-scheme: dark;
-    --plane:     #0d0d0d;
-    --surface-1: #1a1a19;
-    --ink-1:     #f0efec;
-    --ink-2:     #c3c2b7;
-    --ink-muted: #898781;
-    --grid:      #2c2c2a;
-    --axis:      #383835;
-    --ring:      rgba(255, 255, 255, 0.10);
-    --wash:      rgba(255, 255, 255, 0.06);
-    --s1: #3987e5;
-    --s2: #d95926;
-    --s3: #199e70;
-    --s4: #c98500;
-    --s5: #d55181;
-    --s6: #008300;
-    --s7: #9085e9;
-    --s8: #e66767;
+    --sky-high:  #16293f;
+    --sky-mid:   #0e1b2a;
+    --plane:     #0a121c;
+    --plane-2:   #0d1722;
+    --cloud:     rgba(104, 170, 236, 0.30);
+    --surface-1: #121d2a;
+    --ink-1:     #e7eef6;
+    --ink-2:     #a9bdd2;
+    --ink-muted: #71859b;
+    --grid:      #1e2d3d;
+    --axis:      #2b3e52;
+    --ring:      rgba(150, 190, 235, 0.16);
+    --wash:      rgba(150, 190, 235, 0.07);
+    --accent:      #5aa6ef;
+    --accent-ink:  #07131f;
+    --accent-soft: #15293d;
+    --good:        #2ad39a;
+    --warning:     #e0a92c;
+    --critical:    #ff6b6b;
+    --s1: #5699e4;
+    --s2: #e4915c;
+    --s3: #35b49c;
+    --s4: #d6a638;
+    --s5: #de8cb3;
+    --s6: #7bb858;
+    --s7: #8d85e0;
+    --s8: #e07b73;
   }
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --plane:     #0d0d0d;
-  --surface-1: #1a1a19;
-  --ink-1:     #f0efec;
-  --ink-2:     #c3c2b7;
-  --ink-muted: #898781;
-  --grid:      #2c2c2a;
-  --axis:      #383835;
-  --ring:      rgba(255, 255, 255, 0.10);
-  --wash:      rgba(255, 255, 255, 0.06);
-  --s1: #3987e5;
-  --s2: #d95926;
-  --s3: #199e70;
-  --s4: #c98500;
-  --s5: #d55181;
-  --s6: #008300;
-  --s7: #9085e9;
-  --s8: #e66767;
+  --sky-high:  #16293f;
+  --sky-mid:   #0e1b2a;
+  --plane:     #0a121c;
+  --plane-2:   #0d1722;
+  --cloud:     rgba(104, 170, 236, 0.30);
+  --surface-1: #121d2a;
+  --ink-1:   #e7eef6;
+  --ink-2:   #a9bdd2;
+  --ink-muted: #71859b;
+  --grid:    #1e2d3d;
+  --axis:    #2b3e52;
+  --ring:    rgba(150, 190, 235, 0.16);
+  --wash:    rgba(150, 190, 235, 0.07);
+  --accent:    #5aa6ef;
+  --accent-ink:  #07131f;
+  --accent-soft: #15293d;
+  --good:    #2ad39a;
+  --warning:   #e0a92c;
+  --critical:  #ff6b6b;
+  --s1: #5699e4;
+  --s2: #e4915c;
+  --s3: #35b49c;
+  --s4: #d6a638;
+  --s5: #de8cb3;
+  --s6: #7bb858;
+  --s7: #8d85e0;
+  --s8: #e07b73;
 }
 
 * { box-sizing: border-box; }
@@ -86,8 +124,58 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* -- weather ------------------------------------------------------------
+ * The only ambient motion in the product. Three soft masses drift across a
+ * fixed layer behind everything, slowly enough that you notice it on the
+ * second glance rather than the first. They live behind the page and never
+ * behind a card, so no figure is ever read against a moving ground.
+ *
+ * Opacity is deliberately low. If this is visible while you are reading a
+ * number, it is turned up too far. */
+.sky {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    var(--sky-high) 0%,
+    var(--sky-mid) 30%,
+    var(--plane) 62%,
+    var(--plane) 100%
+  );
+}
+.cloud {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(40px);
+  background: radial-gradient(closest-side at 50% 50%,
+              var(--cloud), transparent 72%);
+  will-change: transform;
+}
+/* They live in the blue band at the top, because that is the only part of
+   the page with enough colour in it for white to read as cloud rather than
+   as a smudge. Nothing below the fold moves. */
+.cloud.a { width: 42vw; height: 13vw; top: 1%;  left: -24vw; animation: drift 150s linear infinite; }
+.cloud.b { width: 27vw; height: 9vw;  top: 12%; left: -30vw; animation: drift 112s linear infinite 20s; opacity: 0.85; }
+.cloud.c { width: 54vw; height: 15vw; top: 24%; left: -42vw; animation: drift 196s linear infinite 55s; opacity: 0.6; }
+
+@keyframes drift {
+  from { transform: translateX(0); }
+  to   { transform: translateX(185vw); }
+}
+
+/* Someone who has asked their system to stop moving things gets the same
+   sky, held still. */
+@media (prefers-reduced-motion: reduce) {
+  .cloud { animation: none; left: 12vw; }
+  .cloud.b { left: 48vw; }
+  .cloud.c { left: 26vw; }
+}
+
 h1, h2, h3 { margin: 0; font-weight: 600; }
-h1 { font-size: 15px; letter-spacing: 0.01em; }
+h1 { font-size: 16px; letter-spacing: -0.01em; }
 h2 { font-size: 13px; color: var(--ink-2); }
 
 .muted { color: var(--ink-muted); font-size: 12px; }
@@ -104,9 +192,9 @@ h2 { font-size: 13px; color: var(--ink-2); }
   gap: 18px;
   flex-wrap: wrap;
   padding: 10px var(--gutter);
-  background: color-mix(in srgb, var(--plane) 88%, transparent);
-  backdrop-filter: blur(8px);
-  border-bottom: 1px solid var(--ring);
+  background: color-mix(in srgb, var(--sky-high) 72%, transparent);
+  backdrop-filter: blur(10px) saturate(1.1);
+  box-shadow: 0 1px 0 rgba(21, 60, 110, 0.06);
 }
 
 .brand { display: flex; align-items: center; gap: 8px; }
@@ -121,6 +209,19 @@ h2 { font-size: 13px; color: var(--ink-2); }
 .dot.down  { background: var(--critical); }
 
 .ranges { display: flex; gap: 2px; flex-wrap: wrap; }
+
+/* On a phone the five ranges wrap 4 + 1 and leave one option orphaned on a
+   line of its own. A single scrolling row keeps them as one control. */
+@media (max-width: 560px) {
+  .ranges {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .ranges::-webkit-scrollbar { display: none; }
+  .ranges button { flex: none; }
+}
 
 .ranges button, .ghost {
   font: inherit;
@@ -140,7 +241,117 @@ h2 { font-size: 13px; color: var(--ink-2); }
   font-weight: 600;
 }
 
-.bar-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.bar-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+
+.ghost.icon {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+  border-color: var(--ring);
+  color: var(--ink-2);
+}
+.ghost.icon:hover { color: var(--ink-1); background: var(--surface-1); }
+
+/* -- primary navigation -------------------------------------------------- */
+
+/* Sections, not filters. They sit next to the brand rather than on the right
+   so the question they answer ("where am I") is read before the status. */
+.views {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--wash);
+}
+.views button {
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 13px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.views button:hover { color: var(--ink-1); }
+.views button[aria-current="page"] {
+  background: var(--surface-1);
+  color: var(--ink-1);
+  font-weight: 550;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.view[hidden] { display: none; }
+
+.page-head { margin: 4px 0 18px; }
+.page-head h2 { margin: 0 0 6px; font-size: 20px; letter-spacing: -0.01em; }
+.page-head p {
+  margin: 0;
+  max-width: 76ch;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+/* A segmented control, for choices that are views of one list rather than
+   actions on it. */
+.seg {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--wash);
+}
+.seg button {
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.seg button:hover { color: var(--ink-1); }
+.seg button[aria-selected="true"] {
+  background: var(--surface-1);
+  color: var(--ink-1);
+  font-weight: 550;
+}
+
+.filter-input {
+  font: inherit;
+  font-size: 12.5px;
+  padding: 6px 10px;
+  min-width: 240px;
+  border: 1px solid var(--ring);
+  border-radius: 8px;
+  background: var(--plane);
+  color: var(--ink-1);
+}
+.filter-input:focus { outline: none; border-color: var(--axis); }
+
+.rule-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 18px 0 2px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-1);
+}
+.rule-group-head:first-child { margin-top: 4px; }
+.rule-group-head small { font-weight: 400; color: var(--ink-muted); }
+
+@media (max-width: 900px) {
+  .views { order: 3; width: 100%; }
+  .filter-input { min-width: 140px; flex: 1; }
+}
 
 /* -- layout ------------------------------------------------------------ */
 
@@ -152,13 +363,33 @@ main {
   flex-direction: column;
   gap: 14px;
 }
+/* A column flex item still defaults to `min-width: auto`, so it refuses to be
+   narrower than its widest unbreakable content and pushes the whole page
+   sideways on a phone. Each section has to be told it may shrink. */
+main > * { min-width: 0; }
 
 .card {
+  position: relative;
   background: var(--surface-1);
   border: 1px solid var(--ring);
   border-radius: var(--radius);
   padding: 14px 16px 16px;
+  box-shadow: 0 1px 2px rgba(21, 60, 110, 0.05),
+              0 8px 24px -18px rgba(21, 60, 110, 0.28);
 }
+/* A single hairline of light along the top edge gives the card a physical
+   presence without another drop shadow under it. */
+.card::before {
+  content: "";
+  position: absolute;
+  inset: 0 12px auto;
+  height: 1px;
+  border-radius: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.9), transparent);
+  pointer-events: none;
+}
+:root[data-theme="dark"] .card::before,
+.card:is(:root[data-theme="dark"] *)::before { opacity: 0.25; }
 
 .card-head {
   display: flex;
@@ -181,30 +412,40 @@ main {
 
 .tiles {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 1px;
+  background: var(--grid);
+  border: 1px solid var(--ring);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(21, 60, 110, 0.05),
+              0 8px 24px -18px rgba(21, 60, 110, 0.28);
 }
 
 .tile {
   background: var(--surface-1);
-  border: 1px solid var(--ring);
-  border-radius: var(--radius);
-  padding: 13px 15px 14px;
+  padding: 14px 17px 16px;
 }
 .tile .label {
-  font-size: 11.5px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--ink-muted);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-2);
 }
 .tile .value {
-  font-size: 27px;
+  font-size: 28px;
   font-weight: 600;
   line-height: 1.15;
-  margin-top: 5px;
-  letter-spacing: -0.01em;
+  margin-top: 6px;
+  letter-spacing: -0.015em;
 }
-.tile .sub { font-size: 12px; color: var(--ink-2); margin-top: 2px; }
+.tile .sub { font-size: 12px; color: var(--ink-muted); margin-top: 3px; }
+.tile .detail {
+  font-size: 11.5px;
+  color: var(--ink-muted);
+  margin-top: 5px;
+  padding-top: 5px;
+  border-top: 1px solid var(--grid);
+}
 
 /* -- legend ------------------------------------------------------------ */
 
@@ -240,12 +481,10 @@ svg text { font-family: var(--sans); }
 table.bars { width: 100%; border-collapse: collapse; }
 table.bars th {
   text-align: left;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
   color: var(--ink-muted);
-  padding: 0 0 6px;
+  padding: 0 0 7px;
   border-bottom: 1px solid var(--grid);
 }
 table.bars th:last-child, table.bars td:last-child { text-align: right; }
@@ -287,14 +526,20 @@ td.pct { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--i
 
 .review-row {
   display: grid;
+  /* The time and block columns each carry a second line now (when it
+     happened, and the longest single sitting), so they need room for words
+     rather than just a figure. */
   grid-template-columns:
-    minmax(170px, 1.4fr) 72px 76px minmax(150px, 1.2fr) 152px 142px auto;
+    minmax(160px, 1.3fr) 108px 94px minmax(0, 0.9fr) 136px 126px auto;
   align-items: center;
   gap: 10px;
   padding: 8px 0;
   border-bottom: 1px solid var(--grid);
 }
 .review-row:last-child { border-bottom: none; }
+/* The scope control names the thing it will match, so clipping it defeats
+   the point of spelling it out in the first place. */
+.review-row select { min-width: 196px; }
 .review-row .what { min-width: 0; }
 .review-row .what b {
   display: block;
@@ -427,12 +672,50 @@ footer a { color: var(--ink-2); }
   font-size: 11.5px;
 }
 
+/* -- review queue additions --------------------------------------------- */
+
+.review-hint {
+  margin-bottom: 12px;
+  padding: 10px 13px;
+  border: 1px solid var(--ring);
+  border-left: 3px solid var(--s1);
+  border-radius: var(--radius);
+  background: var(--plane);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+.review-hint b { color: var(--ink-1); }
+button.linkish {
+  font: inherit;
+  font-size: 12.5px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--s1);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.review-row .t small,
+.review-row .pct small {
+  display: block;
+  margin-top: 2px;
+  font-size: 10.5px;
+  font-weight: 400;
+  color: var(--ink-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* -- your setup --------------------------------------------------------- */
 
 .setup-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 26px;
+  grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr));
+  align-items: start;
+  gap: 14px;
 }
 .setup-col h3, .setup-packs-head {
   margin: 0 0 4px;
@@ -484,7 +767,7 @@ footer a { color: var(--ink-2); }
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 13ch;
+  max-width: 18ch;
 }
 .taxon-row .act {
   font: inherit;
@@ -499,6 +782,20 @@ footer a { color: var(--ink-2); }
 }
 .taxon-row .act:hover { background: var(--wash); color: var(--ink-1); }
 .taxon-row .act.danger:hover { border-color: var(--critical); color: var(--critical); }
+.taxon-row .act.warn:hover { border-color: var(--warning); color: var(--ink-1); }
+/* Once armed, the button states the size of what it is about to do, so it
+   has to stop looking like the quiet secondary control it was. */
+.taxon-row .act.armed {
+  border-color: var(--critical);
+  color: var(--critical);
+  font-weight: 600;
+}
+.taxon-row .act.warn.armed { border-color: var(--warning); color: var(--ink-1); }
+
+/* Three actions plus a name will not fit a narrow column, so the row wraps
+   rather than pushing the page sideways. */
+.taxon-row { flex-wrap: wrap; }
+.taxon-row .name { flex: 1 1 140px; }
 
 /* The swatch is a real control: click it and the eight palette slots open
    underneath. Eight named slots rather than a colour picker, because each one
@@ -686,13 +983,142 @@ button.resume[hidden] { display: none; }
 
 /* Grid and flex children default to `min-width: auto`, which means they refuse
    to shrink below their content and push the page sideways on a phone. */
+/* The charts are drawn at the width the container had when they were drawn,
+   and carry that in a width attribute. They also carry a viewBox, so letting
+   them scale makes the page correct on a window resize whether or not the
+   redraw has caught up yet. Without this the dashboard stays at its old
+   width until you reload. */
+.chart-host svg { max-width: 100%; height: auto; display: block; }
+
 .tiles > *, .grid > *, .review-row > *, .rule-row > *,
 .setup-grid > * { min-width: 0; }
 
-@media (max-width: 760px) {
+/* A phone wants a tighter gutter than a laptop regardless, and 16px on each
+   side of a 390px screen is most of the reason the dashboard was 12px wider
+   than the viewport there. */
+@media (max-width: 480px) {
+  :root { --gutter: 10px; }
+  .page-head h2 { font-size: 18px; }
+}
+
+@media (max-width: 1040px) {
   .review-row { grid-template-columns: 1fr 1fr; }
   .review-row .ctx, .review-row .t { grid-column: span 2; }
   .review-row > div:last-child { flex-wrap: wrap; }
+  /* The floor that keeps the scope control readable on a wide screen is
+     wider than the whole column on a phone, so it is lifted here and the
+     control takes the row instead. */
+  .review-row select { min-width: 0; width: 100%; }
   .rule-row { grid-template-columns: 1fr 1fr; }
   .k { max-width: 100%; }
+}
+
+/* -- first run -----------------------------------------------------------
+ * Shown once per install, from a flag the tracker keeps rather than the
+ * browser, so it does not reappear in a second browser and does appear
+ * exactly once on a machine you set up for somebody else.
+ *
+ * Black means black here: no sky, no cards, no chrome. This is the one
+ * orchestrated moment in the product, and it is spent saying the only thing
+ * a new person actually needs to be told. It cannot be dismissed early,
+ * which is the point: the privacy promise should be read, not clicked past.
+ */
+
+.welcome {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background: #000;
+  color: #fff;
+}
+.welcome[hidden] { display: none; }
+
+.welcome-inner {
+  width: min(560px, 100%);
+  text-align: left;
+}
+
+.w-line {
+  margin: 0;
+  opacity: 0;
+  transform: translateY(10px);
+  animation: w-in 900ms cubic-bezier(0.22, 0.75, 0.3, 1) forwards;
+}
+
+.w-1 {
+  font-size: clamp(26px, 5.2vw, 40px);
+  font-weight: 600;
+  line-height: 1.16;
+  letter-spacing: -0.02em;
+  animation-delay: 240ms;
+}
+.w-2 {
+  margin-top: 20px;
+  max-width: 44ch;
+  font-size: clamp(15px, 2.2vw, 18px);
+  line-height: 1.6;
+  color: #b9c4d2;
+  animation-delay: 1500ms;
+}
+.w-3 {
+  margin-top: 34px;
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  color: #5d6b7c;
+  animation-delay: 2900ms;
+}
+
+@keyframes w-in {
+  to { opacity: 1; transform: none; }
+}
+
+/* The wait is five seconds whatever you do, so it is shown filling rather
+   than left to feel like something has stalled. */
+.w-rule {
+  margin-top: 28px;
+  height: 1px;
+  background: #1d2630;
+  overflow: hidden;
+}
+.w-rule span {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: #4f9ae4;
+  animation: w-fill 5000ms linear forwards;
+}
+@keyframes w-fill { to { width: 100%; } }
+
+.w-go {
+  margin-top: 22px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 11px 26px;
+  border: 1px solid #253040;
+  border-radius: 10px;
+  background: transparent;
+  color: #4a5668;
+  cursor: default;
+  opacity: 0;
+  transition: opacity 500ms ease, background 140ms ease, color 140ms ease;
+}
+.w-go:enabled {
+  opacity: 1;
+  border-color: transparent;
+  background: #4f9ae4;
+  color: #04121f;
+  cursor: pointer;
+}
+.w-go:enabled:hover { background: #6cabed; }
+.w-go:focus-visible { outline: 2px solid #4f9ae4; outline-offset: 3px; }
+
+/* Reduced motion still gets the five seconds and the same words; it simply
+   does not move while it waits. */
+@media (prefers-reduced-motion: reduce) {
+  .w-line { animation-duration: 1ms; }
+  .w-rule span { animation-duration: 5000ms; }
 }

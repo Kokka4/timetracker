@@ -29,7 +29,11 @@ from __future__ import annotations
 
 from typing import Any
 
-SLOTS = ("s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8")
+from .db import PALETTE as SLOTS  # noqa: E402
+
+# The colours below are preferences, not reservations. Two entries here can
+# name the same slot, because the starter set cannot know which packs will be
+# turned on later, and storage moves the loser to a free one on insert.
 
 # Priorities. Lower wins, and each field is claimed independently, so a pack
 # rule can set the category of a block whose client came from one of yours.
@@ -379,7 +383,36 @@ def legacy_key(rule: dict[str, Any]) -> tuple[str, str, str]:
 # ---------------------------------------------------------------------------
 
 SETUP_KEY = "taxonomy_version"
-SETUP_VERSION = "2"
+SETUP_VERSION = "3"
+
+
+def dedupe_colors(store) -> int:
+    """Pull apart two categories that ended up on the same palette slot.
+
+    The catalogue's colours are written independently — the starter set cannot
+    know which packs get turned on later — so before storage started resolving
+    this on insert, a pack could land on a slot the starter set already held.
+    The charts cope, because they re-resolve collisions among the series they
+    actually draw, but it made the swatch next to a category in Settings a
+    lie about the colour it draws in.
+
+    Beyond eight categories the palette has to repeat, so the first eight get
+    distinct slots and the rest keep what they have.
+    """
+    used: set[str] = set()
+    moved = 0
+    for row in store.categories():
+        color = row.get("color")
+        if color and color not in used:
+            used.add(color)
+            continue
+        spare = next((slot for slot in SLOTS if slot not in used), None)
+        if spare is None:
+            continue  # more categories than colours; nothing to be done
+        store.update_category(int(row["id"]), color=spare)
+        used.add(spare)
+        moved += 1
+    return moved
 
 
 def slot_for(name: str) -> str:
@@ -559,5 +592,6 @@ def ensure(store, backup_dir=None) -> dict[str, Any]:
             summary["case"] = "left-alone"
 
     summary["registered"] = _register_names_from_rules(store)
+    summary["colors_moved"] = dedupe_colors(store)
     store.set_meta(SETUP_KEY, SETUP_VERSION)
     return summary

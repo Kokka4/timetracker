@@ -19,6 +19,28 @@ Everything is local. The HTTP server binds to `127.0.0.1`, the database is a
 SQLite file in `data/`, the dashboard loads no fonts or scripts from anywhere,
 and nothing in the code makes an outbound request.
 
+Two independent reasons a colleague on the same wifi cannot reach your
+tracker: `127.0.0.1` means "the machine making the request" and is never
+routed onto a network, and the server is not listening on any other
+interface, so your LAN address answers nothing either.
+
+### A nicer address than an IP
+
+Any hostname ending in `.localhost` is reserved by [RFC 6761][rfc] and
+resolved to the loopback address by the browser itself. No hosts file, no
+admin rights, no DNS:
+
+```
+http://timetrack.localhost:8734
+```
+
+Pick whatever name you like. It can still only ever reach the machine it was
+typed on, so it is exactly as private as the IP. Chrome and Firefox honour
+it; Safari is unreliable about it, so keep `127.0.0.1:8734` as the fallback.
+Change `"port"` in `config.json` if 8734 is taken or you just prefer another.
+
+[rfc]: https://www.rfc-editor.org/rfc/rfc6761#section-6.3
+
 ---
 
 ## Install
@@ -33,7 +55,8 @@ That finds a usable Python, writes a launch agent, starts it, and prints a
 diagnostic. The agent has `RunAtLoad` and `KeepAlive`, so it starts at every
 login and restarts if it ever dies.
 
-Then open **http://127.0.0.1:8734**.
+Then open **http://timetrack.localhost:8734** (or
+**http://127.0.0.1:8734**, which always works).
 
 Re-running `./install.sh` is safe; it replaces the agent and restarts.
 
@@ -95,6 +118,18 @@ rather than a migration.
 **Clients** are whose work it is. Add them up front, or create one as you go
 by labelling a block. Archive the ones you have finished with and they leave
 the picker without taking their history with them.
+
+**Undoing a label** is the one you will want soonest. Labelling in bulk is one
+click, and so is getting it wrong. Every row says how many rules use it, and
+offers two ways out:
+
+- **Unlabel** takes the name off every rule that assigns it. The client or
+  category itself stays, ready to be used properly. A rule that existed only
+  to set that name goes; a rule that also set the other half keeps it.
+- **Delete** does the same and removes the record too.
+
+Neither touches a single recorded event. Classification is worked out when you
+look at it, so un-labelling simply stops the history claiming that name.
 
 **Starter packs** are optional bundles of rules for a kind of work: sales and
 outreach, software, design, marketing, finance, legal. Turning one on only
@@ -207,6 +242,7 @@ launchctl kickstart -k gui/$(id -u)/ai.leadprinter.timetracker
 | `port` | 8734 | dashboard and ingest port |
 | `sample_interval_seconds` | 5 | how often the watcher looks |
 | `idle_threshold_seconds` | 180 | silence before you count as away |
+| `review_min_seconds` | 60 | the floor for the review queue; shorter groups are still recorded, they just stop asking to be labelled |
 | `capture_window_titles` | true | set false to never read titles |
 | `excluded_apps` | 1Password etc. | timed, but no title recorded |
 | `excluded_title_patterns` | password, secret | regexes; matching titles are dropped |

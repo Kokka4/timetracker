@@ -8,18 +8,35 @@
 </head>
 <body>
 
+<div class="sky" aria-hidden="true">
+  <span class="cloud a"></span>
+  <span class="cloud b"></span>
+  <span class="cloud c"></span>
+</div>
+
+
+<div class="welcome" id="welcome" hidden role="dialog" aria-modal="true"
+     aria-labelledby="welcome-title">
+  <div class="welcome-inner">
+    <h1 id="welcome-title" class="w-line w-1">Welcome to your personal Time Tracker</h1>
+    <p class="w-line w-2">All data stays on your computer and is not shared
+      with absolutely anyone.</p>
+    <p class="w-line w-3">built by Mihkel Kokka</p>
+    <div class="w-rule"><span id="welcome-fill"></span></div>
+    <button class="w-go" id="welcome-go" disabled>Continue</button>
+  </div>
+</div>
+
 <header class="bar">
   <div class="brand">
     <span class="dot" id="live-dot" title="tracker status"></span>
     <h1>Time</h1>
   </div>
 
-  <nav class="ranges" id="ranges" role="tablist" aria-label="Date range">
-    <button role="tab" data-range="today">Today</button>
-    <button role="tab" data-range="yesterday">Yesterday</button>
-    <button role="tab" data-range="week">7 days</button>
-    <button role="tab" data-range="this_month">This month</button>
-    <button role="tab" data-range="month">30 days</button>
+  <nav class="views" id="views" aria-label="Sections">
+    <button data-view="dashboard" aria-current="page">Dashboard</button>
+    <button data-view="setup">Setup</button>
+    <button data-view="rules">Rules</button>
   </nav>
 
   <div class="bar-right">
@@ -40,7 +57,7 @@
       </div>
     </div>
 
-    <button class="ghost" id="theme" title="Switch light / dark" aria-label="Switch light or dark theme">&#9686;</button>
+    <button class="ghost icon" id="theme" title="Switch light / dark" aria-label="Switch light or dark theme">&#9686;</button>
   </div>
 </header>
 
@@ -55,7 +72,15 @@
 
   <div id="notices"></div>
 
-  <section class="tiles" id="tiles" aria-label="Headline figures"></section>
+    <section class="view" data-view="dashboard">
+  <nav class="ranges" id="ranges" role="tablist" aria-label="Date range">
+    <button role="tab" data-range="today">Today</button>
+    <button role="tab" data-range="yesterday">Yesterday</button>
+    <button role="tab" data-range="week">7 days</button>
+    <button role="tab" data-range="this_month">This month</button>
+    <button role="tab" data-range="month">30 days</button>
+  </nav>
+<section class="tiles" id="tiles" aria-label="Headline figures"></section>
 
   <section class="card">
     <div class="card-head">
@@ -101,61 +126,82 @@
     <div id="review"></div>
   </section>
 
-  <section class="card">
-    <div class="card-head">
-      <h2>Your setup</h2>
-      <span class="muted">Categories, clients and the starter packs. Everything
-        here is yours to rename, recolour or delete.</span>
-      <span class="spacer"></span>
-      <button class="ghost" id="setup-toggle" aria-expanded="false">Show</button>
+    </section>
+
+  <section class="view" data-view="setup" hidden>
+    <div class="page-head">
+      <h2>Setup</h2>
+      <p>The vocabulary this tracker describes your work in. All of it is
+        yours: rename, recolour, delete, or start from nothing. Renaming
+        re-labels your whole history the moment you do it.</p>
     </div>
-    <div id="setup" hidden>
+
+    <div id="setup">
       <div class="setup-grid">
-        <div class="setup-col">
+        <section class="card setup-col">
           <h3>Categories <span class="muted" id="category-count"></span></h3>
-          <p class="setup-note">What kind of work a block is. Renaming one
-            re-labels your whole history, because classification is worked out
-            when you look at it rather than stored on the event.</p>
+          <p class="setup-note">What kind of work a block is. The tag says
+            where each came from and how many rules use it.</p>
           <div id="category-list"></div>
           <form class="setup-add" id="category-add">
             <input type="text" id="category-new" placeholder="New category"
                    maxlength="60" autocomplete="off">
             <button type="submit">Add</button>
           </form>
-        </div>
+        </section>
 
-        <div class="setup-col">
+        <section class="card setup-col">
           <h3>Clients <span class="muted" id="client-count"></span></h3>
-          <p class="setup-note">Whose work it is. Add them here, or create one
-            as you go from the review panel above. Archive the ones you have
-            finished with to keep the picker short.</p>
+          <p class="setup-note">Whose work it is. Add them here, or create
+            one as you go from the review queue on the Dashboard. Archive the
+            ones you have finished with to keep the picker short.</p>
           <div id="client-list"></div>
           <form class="setup-add" id="client-add">
             <input type="text" id="client-new" placeholder="New client"
                    maxlength="60" autocomplete="off">
             <button type="submit">Add</button>
           </form>
-        </div>
+        </section>
       </div>
 
-      <h3 class="setup-packs-head">Starter packs</h3>
+    </div>
+
+    <section class="card">
+      <div class="card-head"><h2>Starter packs</h2></div>
       <p class="setup-note">Optional bundles of rules for a kind of work.
         Turning one on only adds; turning it off takes back exactly what it
         added, and never a category you have started using yourself.</p>
       <div id="pack-list"></div>
-    </div>
+    </section>
   </section>
 
-  <section class="card">
-    <div class="card-head">
-      <h2>Rules <span class="muted" id="rule-count"></span></h2>
-      <span class="spacer"></span>
-      <button class="ghost" id="rules-toggle" aria-expanded="false">Show</button>
+  <section class="view" data-view="rules" hidden>
+    <div class="page-head">
+      <h2>Rules</h2>
+      <p>Every label you apply writes one of these, and every rule applies to
+        your whole history, not just from now on. That is the learning: visit
+        a site you have labelled before and it is attributed before you look.
+        A site you have never labelled waits for you in the review queue.</p>
     </div>
-    <div id="rules" hidden></div>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>All rules <span class="muted" id="rule-count"></span></h2>
+        <span class="spacer"></span>
+        <input type="search" id="rule-search" class="filter-input"
+               placeholder="Filter by pattern, client or category" autocomplete="off">
+        <div class="seg" id="rule-source" role="tablist" aria-label="Filter by origin">
+          <button data-source="all" aria-selected="true">All</button>
+          <button data-source="user">Yours</button>
+          <button data-source="starter">Starter</button>
+          <button data-source="pack">Packs</button>
+        </div>
+      </div>
+      <div id="rules"></div>
+    </section>
   </section>
 
-  <footer>
+<footer>
     <span id="db-line"></span>
     <span class="spacer"></span>
     <a id="export-link" href="/api/export.csv?range=week" download>Export this range as CSV</a>

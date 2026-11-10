@@ -67,7 +67,9 @@ def _summary(ctx: Context, params: dict[str, list[str]]) -> dict[str, Any]:
         ctx.store, ctx.cfg, window["start_ts"], window["end_ts"]
     )
     afk = ctx.store.afk_rows(window["start_ts"], window["end_ts"])
-    return analytics.summarize(blocks, afk, window)
+    return analytics.summarize(
+        blocks, afk, window, review_min_seconds=ctx.cfg.review_min
+    )
 
 
 def make_handler(ctx: Context):
@@ -170,10 +172,25 @@ def make_handler(ctx: Context):
                 return True
             if origin.startswith(EXTENSION_ORIGINS):
                 return True
-            return origin in (
+            if origin in (
                 f"http://{ctx.cfg.host}:{ctx.cfg.port}",
                 f"http://127.0.0.1:{ctx.cfg.port}",
                 f"http://localhost:{ctx.cfg.port}",
+            ):
+                return True
+            # Anything under `.localhost` is reserved by RFC 6761 and resolved
+            # to the loopback address by the browser itself, with no hosts
+            # file and no DNS. That makes `http://time.localhost:8734` a nicer
+            # bookmark than an IP address, and it can only ever reach the
+            # machine it was typed on, so it is as safe as 127.0.0.1 is.
+            try:
+                parts = urlsplit(origin)
+            except ValueError:
+                return False
+            return (
+                parts.scheme == "http"
+                and (parts.hostname or "").endswith(".localhost")
+                and parts.port == ctx.cfg.port
             )
 
         def _cors(self) -> dict[str, str]:
@@ -259,6 +276,11 @@ def make_handler(ctx: Context):
                 "server_uptime_seconds": round(time.time() - ctx.started_at, 1),
                 "requests": ctx.requests,
                 "today_seconds": round(today_total, 1),
+                # Kept on the machine, not in the browser: the greeting is
+                # about this install, so it should not reappear because you
+                # opened a different browser, and should appear exactly once
+                # on a colleague's Mac after you set it up for them.
+                "first_run": ctx.store.get_meta("welcomed") is None,
                 "pause": ctx.pause_state(),
                 "watcher": ctx.watcher.status() if ctx.watcher else {"running": False},
                 "browser": ctx.ingest.status() if ctx.ingest else {"connected": False},
@@ -346,6 +368,19 @@ def make_handler(ctx: Context):
             ctx.requests += 1
             path = urlsplit(self.path).path
             self._drain_body()
+
+            # Every write, not just the ones that felt dangerous.
+            #
+            # A page you have open cannot READ anything here: no CORS header
+            # is granted to an http(s) origin, so the browser refuses to hand
+            # it the response. Writing is a different matter. A cross-origin
+            # POST carrying `text/plain` is a "simple request" and skips the
+            # preflight entirely, and this server parses the body as JSON
+            # whatever the content type claims. Without this check, any site
+            # could quietly create rules or delete your categories while you
+            # read it. It could not learn a thing, but it could make a mess.
+            if not self._control_origin():
+                return self._error(403, "not allowed to change the tracker")
             try:
                 if path == "/api/ingest/chrome":
                     return self._ingest()
@@ -357,6 +392,9 @@ def make_handler(ctx: Context):
                     return self._create_rule()
                 if path == "/api/label":
                     return self._label_block()
+                if path == "/api/welcome":
+                    ctx.store.set_meta("welcomed", str(int(time.time())))
+                    return self._json({"ok": True})
                 if path == "/api/categories":
                     return self._create_named("category")
                 if path == "/api/clients":
@@ -515,6 +553,24 @@ def make_handler(ctx: Context):
 
         def _update_named(self, kind: str, record_id: int) -> None:
             payload = self._body()
+
+            if payload.get("unassign"):
+                # The undo for a bulk mislabel: the name survives, every rule
+                # that was assigning it lets go.
+                result = (
+                    ctx.store.unassign_category(record_id)
+                    if kind == "category"
+                    else ctx.store.unassign_client(record_id)
+                )
+                if not result.get("ok"):
+                    return self._error(404, f"no such {kind}: {record_id}")
+                print(
+                    f"[taxonomy] {kind} {result['name']!r} cleared from "
+                    f"{result['rules_cleared']} rules",
+                    flush=True,
+                )
+                return self._json({"ok": True, **result})
+
             if payload.get("delete"):
                 result = (
                     ctx.store.delete_category(record_id)
@@ -570,6 +626,8 @@ def make_handler(ctx: Context):
             ctx.requests += 1
             path = urlsplit(self.path).path
             self._drain_body()
+            if not self._control_origin():
+                return self._error(403, "not allowed to change the tracker")
             match = RULE_ID_PATH.match(path)
             if not match:
                 return self._error(404, f"unknown endpoint: {path}")

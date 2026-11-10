@@ -19,8 +19,10 @@ const state = {
   status: null,
   labels: { clients: [], categories: [], projects: [], colors: {} },
   taxonomy: null,
-  rulesOpen: false,
-  setupOpen: false,
+  rules: [],
+  ruleSearch: "",
+  ruleSource: "all",
+  view: "dashboard",
 };
 
 /* -- small helpers ------------------------------------------------------ */
@@ -108,9 +110,13 @@ function assignSlots(keys) {
   const map = new Map();
   const taken = new Set();
 
+  /* A stored colour is honoured unless something already drawn in this chart
+     has it. Past eight categories the palette has to repeat somewhere, and a
+     chart with two identical greens in it is unreadable however correct the
+     swatches in Settings are, so the series that asks second is moved. */
   for (const key of keys) {
     const at = SLOT_NAMES.indexOf(colors[key]);
-    if (at >= 0) {
+    if (at >= 0 && !taken.has(at)) {
       map.set(key, SLOTS[at]);
       taken.add(at);
     }
@@ -215,7 +221,18 @@ function columnChart(host, series, granularity) {
   }
 
   const slots = assignSlots(keys);
-  const order = keys.slice().sort((a, b) => masterIndex(a) - masterIndex(b) || a.localeCompare(b));
+  /* Stack in palette order, so adjacent segments of a column are adjacent
+     slots: that is the pairing the palette's colourblind separation was
+     actually validated on. Derived from the assigned colours rather than from
+     a list of category names, which is what made the old ordering a fixed
+     opinion about whose job this tool was for. */
+  const slotRank = (key) => {
+    const at = SLOTS.indexOf(slots.get(key));
+    return at < 0 ? SLOTS.length : at;
+  };
+  const order = keys.slice().sort(
+    (a, b) => slotRank(a) - slotRank(b) || a.localeCompare(b)
+  );
 
   const totals = buckets.map((_, b) => keys.reduce((sum, _k, k) => sum + (data[k][b] || 0), 0));
   const grand = totals.reduce((a, b) => a + b, 0);
@@ -472,7 +489,7 @@ function renderTiles(summary) {
 
   const tiles = [
     {
-      label: window_.days === 1 ? "Active time" : `Active time · ${days} days`,
+      label: window_.days === 1 ? "Active time" : `Active time, last ${days} days`,
       value: dur(summary.total_seconds),
       sub: window_.days === 1
         ? window_.start_date
@@ -487,7 +504,7 @@ function renderTiles(summary) {
       label: "Biggest client",
       value: topClient ? topClient.key : "—",
       sub: topClient
-        ? `${dur(topClient.seconds)} · ${pct(topClient.share)} of tracked time`
+        ? `${dur(topClient.seconds)}, ${pct(topClient.share)} of tracked time`
         : "Label something below to populate this",
     },
     {
@@ -496,47 +513,90 @@ function renderTiles(summary) {
       label: window_.days === 1 ? "Away during the day" : "Away during work hours",
       value: dur(away.total),
       sub: summary.span && summary.span.seconds
-        ? `${dur(summary.total_seconds)} active + ${dur(away.total)} away` +
-          ` = ${dur(summary.span.seconds)} first to last` +
-          ([
-            away.idle ? `${dur(away.idle)} idle` : null,
-            away.locked ? `${dur(away.locked)} locked` : null,
-            away.gap ? `${dur(away.gap)} asleep` : null,
-          ].filter(Boolean).length
-            ? ` · ${[
-                away.idle ? `${dur(away.idle)} idle` : null,
-                away.locked ? `${dur(away.locked)} locked` : null,
-                away.gap ? `${dur(away.gap)} asleep` : null,
-              ].filter(Boolean).join(", ")}`
-            : "")
+        ? `of ${dur(summary.span.seconds)} from first to last`
         : "Nothing recorded",
+      detail: [
+        away.idle ? `${dur(away.idle)} idle` : null,
+        away.locked ? `${dur(away.locked)} locked` : null,
+        away.gap ? `${dur(away.gap)} asleep` : null,
+      ].filter(Boolean).join(", "),
     },
   ];
 
   for (const tile of tiles) {
-    host.appendChild(h("div", { class: "tile" }, [
+    const cell = h("div", { class: "tile" }, [
       h("div", { class: "label", text: tile.label }),
       h("div", { class: "value", text: tile.value, title: tile.value }),
       h("div", { class: "sub", text: tile.sub }),
-    ]));
+    ]);
+    if (tile.detail) {
+      cell.appendChild(h("div", { class: "detail", text: tile.detail }));
+    }
+    host.appendChild(cell);
   }
 }
 
 /* -- review queue ------------------------------------------------------- */
 
+/* When a group happened, which is how you actually remember whose work it
+   was. One day gets a clock range; several get the span of days, because
+   "Mon to Wed" is the useful fact and the hours within each are not. */
+function whenText(group) {
+  if (!group.first_ts) return "";
+  const from = new Date(group.first_ts * 1000);
+  const to = new Date(group.last_ts * 1000);
+  const hhmm = (d) => d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const dayName = (d) => d.toLocaleDateString([], { weekday: "short", day: "numeric" });
+
+  if ((group.day_count || 1) <= 1) {
+    const today = new Date().toDateString() === from.toDateString();
+    const label = today ? "" : `${dayName(from)} `;
+    return `${label}${hhmm(from)}–${hhmm(to)}`;
+  }
+  /* No day count on the end: the span already says it recurred, and the
+     block count beside it says how often. The column is narrow and the
+     clock times across a week are not the thing you are remembering. */
+  return `${dayName(from)} – ${dayName(to)}`;
+}
+
 function renderReview(summary) {
   const host = clear($("review"));
   const groups = summary.unlabelled || [];
+  const floor = summary.review_min_seconds || 0;
+
   if (!groups.length) {
     // "Everything is attributed" is only good news when there was something
     // to attribute. On an empty day it reads as a false all-clear.
     host.appendChild(h("div", {
       class: "empty",
       text: summary.block_count
-        ? "Everything in this range is attributed to a client. Good."
+        ? `Nothing left worth labelling in this range${
+            floor ? ` (anything under ${dur(floor)} is left out)` : ""
+          }.`
         : "No activity recorded in this range.",
     }));
     return;
+  }
+
+  /* The one thing stopping this tool answering the question it exists for is
+     having no clients, and the place to add them was buried two sections
+     down behind a Show button. Say so here, where the empty boxes are. */
+  if (!(state.labels.clients || []).length) {
+    const prompt = h("div", { class: "review-hint" }, [
+      h("b", { text: "No clients yet. " }),
+      document.createTextNode(
+        "Type one into any client box below and press Label: it is created as "
+        + "you go. Or add them all at once in "
+      ),
+    ]);
+    const link = h("button", { class: "linkish", text: "Your setup" });
+    link.addEventListener("click", async () => {
+      await showView("setup");
+      setTimeout(() => $("client-new").focus(), 120);
+    });
+    prompt.appendChild(link);
+    prompt.appendChild(document.createTextNode("."));
+    host.appendChild(prompt);
   }
 
   for (const group of groups) {
@@ -545,7 +605,7 @@ function renderReview(summary) {
         text: group.domain || group.title || group.app,
         title: group.url || group.title || group.app,
       }),
-      h("small", { text: `${group.app} · ${group.category}` }),
+      h("small", { text: `${group.app}, ${group.category}` }),
     ]);
 
     const context = h("div", { class: "ctx" });
@@ -559,7 +619,7 @@ function renderReview(summary) {
     }
 
     const clientInput = h("input", {
-      type: "text", list: "known-clients", placeholder: "client",
+      type: "text", list: "known-clients", placeholder: "client (type to add)",
       "aria-label": `Client for ${group.domain || group.app}`,
     });
     const categoryInput = h("input", {
@@ -567,11 +627,32 @@ function renderReview(summary) {
       "aria-label": `Category for ${group.domain || group.app}`,
     });
 
-    const scope = h("select", { "aria-label": "What this rule should match" });
-    if (group.domain) scope.appendChild(h("option", { value: "domain", text: "this site" }));
-    scope.appendChild(h("option", { value: "app", text: "this app" }));
-    if (group.title) scope.appendChild(h("option", { value: "title", text: "this window" }));
-    if (group.url) scope.appendChild(h("option", { value: "url", text: "this page" }));
+    /* How far the rule reaches, spelled out with the actual names. "this
+       app" leaves you guessing whether you are teaching the tracker about
+       every Claude window or only this one, and that is the difference
+       between labelling once and labelling ninety times. */
+    const short = (text, max) => {
+      const value = String(text || "");
+      return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+    };
+    const scope = h("select", {
+      "aria-label": "How far this rule should reach",
+      title: "How far this rule reaches: everything under that name, or only this one window or page",
+    });
+    if (group.domain) {
+      scope.appendChild(h("option", {
+        value: "domain", text: `all of ${short(group.domain, 20)}`,
+      }));
+    }
+    scope.appendChild(h("option", {
+      value: "app", text: `all of ${short(group.app, 20)}`,
+    }));
+    if (group.title) {
+      scope.appendChild(h("option", { value: "title", text: "only this window" }));
+    }
+    if (group.url) {
+      scope.appendChild(h("option", { value: "url", text: "only this page" }));
+    }
 
     const button = h("button", { class: "primary", text: "Label" });
     const submit = async () => {
@@ -609,8 +690,16 @@ function renderReview(summary) {
 
     host.appendChild(h("div", { class: "review-row" }, [
       what,
-      h("div", { class: "t", text: dur(group.seconds) }),
-      h("div", { class: "pct", text: `${group.blocks} block${group.blocks === 1 ? "" : "s"}` }),
+      h("div", { class: "t" }, [
+        h("b", { text: dur(group.seconds) }),
+        h("small", { text: whenText(group) }),
+      ]),
+      h("div", { class: "pct" }, [
+        document.createTextNode(`${group.blocks} block${group.blocks === 1 ? "" : "s"}`),
+        group.blocks > 1 && group.longest
+          ? h("small", { text: `longest ${dur(group.longest)}` })
+          : null,
+      ].filter(Boolean)),
       context,
       clientInput,
       categoryInput,
@@ -628,30 +717,84 @@ function describe(rule) {
     .join("  &  ");
 }
 
+function ruleOrigin(rule) {
+  const source = rule.source || "user";
+  if (source === "starter") return "starter";
+  if (source.startsWith("pack:")) return "pack";
+  return "user";
+}
+
+const RULE_GROUPS = [
+  ["user", "Yours", "Written by labelling a block. These outrank everything else."],
+  ["pack", "From starter packs", "Turn a pack off in Setup to remove its rules together."],
+  ["starter", "Starter", "The universal defaults every install begins with."],
+];
+
 async function renderRules() {
   const host = clear($("rules"));
   const payload = await api("/api/rules", null, "GET");
-  const rules = payload.rules || [];
-  $("rule-count").textContent = `${rules.length}`;
+  state.rules = payload.rules || [];
+  paintRules();
+}
 
-  if (!rules.length) {
+function paintRules() {
+  const host = clear($("rules"));
+  const all = state.rules || [];
+  const needle = (state.ruleSearch || "").trim().toLowerCase();
+  const wanted = state.ruleSource || "all";
+
+  const rules = all.filter((rule) => {
+    if (wanted !== "all" && ruleOrigin(rule) !== wanted) return false;
+    if (!needle) return true;
+    return [describe(rule), rule.client, rule.category, rule.project]
+      .filter(Boolean).join(" ").toLowerCase().includes(needle);
+  });
+
+  $("rule-count").textContent = rules.length === all.length
+    ? `${all.length}`
+    : `${rules.length} of ${all.length}`;
+
+  if (!all.length) {
     host.appendChild(h("div", { class: "empty", text: "No rules yet." }));
     return;
   }
+  if (!rules.length) {
+    host.appendChild(h("div", { class: "empty", text: "Nothing matches that filter." }));
+    return;
+  }
 
-  for (const rule of rules) {
+  /* Grouped by where a rule came from, because that is the question you are
+     asking when you open this page: which of these did I write, and which
+     arrived with the tool? */
+  for (const [key, title, blurb] of RULE_GROUPS) {
+    const mine = rules.filter((rule) => ruleOrigin(rule) === key);
+    if (!mine.length) continue;
+    if (wanted === "all") {
+      host.appendChild(h("div", { class: "rule-group-head" }, [
+        document.createTextNode(title),
+        h("small", { text: `${mine.length}, ${blurb}` }),
+      ]));
+    }
+    for (const rule of mine) host.appendChild(ruleRow(rule));
+  }
+}
+
+function ruleRow(rule) {
+  {
     const toggle = h("input", {
       type: "checkbox", "aria-label": "Rule enabled",
       ...(rule.enabled ? { checked: "checked" } : {}),
     });
     toggle.addEventListener("change", async () => {
       await api(`/api/rules/${rule.id}/toggle`, { enabled: toggle.checked });
+      await renderRules();
       await refresh();
     });
 
     const remove = h("button", { class: "ghost", text: "Delete", title: "Delete this rule" });
     remove.addEventListener("click", async () => {
       await api(`/api/rules/${rule.id}`, null, "DELETE");
+      await renderRules();
       await refresh();
     });
 
@@ -661,13 +804,13 @@ async function renderRules() {
       rule.category ? h("span", { class: "pill", text: rule.category }) : null,
     ]);
 
-    host.appendChild(h("div", { class: `rule-row${rule.enabled ? "" : " off"}` }, [
+    return h("div", { class: `rule-row${rule.enabled ? "" : " off"}` }, [
       h("span", { class: "muted num", text: `p${rule.priority}` }),
       h("code", { text: describe(rule), title: describe(rule) }),
       labels,
       toggle,
       remove,
-    ]));
+    ]);
   }
 }
 
@@ -735,10 +878,12 @@ function sourceLabel(source) {
   if (!source || source === "user") return "yours";
   if (source === "starter") return "starter";
   if (source.startsWith("pack:")) {
+    /* "Sales & outreach" in a 13-character column is "sales & outreac…",
+       which tells you less than the first word on its own. */
     const pack = (state.taxonomy ? state.taxonomy.packs : []).find(
       (p) => p.id === source.slice(5)
     );
-    return pack ? pack.name.toLowerCase() : "pack";
+    return pack ? pack.name.split(" & ")[0].toLowerCase() : "pack";
   }
   return source;
 }
@@ -781,8 +926,9 @@ function swatchButton(row, onPick) {
 
 /* Deleting can take rules with it, so it asks. Inline rather than through
    confirm(), which blocks the page and cannot be styled or tested. */
-function armedButton(label, armedLabel, className, onConfirm) {
+function armedButton(label, armedLabel, className, onConfirm, title) {
   const button = h("button", { class: `act ${className}`, text: label });
+  if (title) button.title = title;
   let armed = false;
   let timer = null;
   button.addEventListener("click", () => {
@@ -811,6 +957,7 @@ async function taxonCall(kind, id, body) {
   try {
     await api(`/api/${TAXON_PATH[kind]}/${id}`, body);
     await renderSetup();
+    if (state.view === "rules") await renderRules();
     await refresh();
   } catch (error) {
     note(error.message);
@@ -837,25 +984,51 @@ function taxonRow(row, kind) {
   });
   node.appendChild(name);
 
-  node.appendChild(h("span", {
-    class: "tag",
-    text: kind === "client"
-      ? (row.archived ? "archived" : "")
-      : sourceLabel(row.source),
-  }));
+  const used = row.rule_count || 0;
+  const plural = used === 1 ? "rule" : "rules";
+  const bits = [];
+  if (kind === "client") {
+    if (row.archived) bits.push("archived");
+  } else {
+    bits.push(sourceLabel(row.source));
+  }
+  bits.push(`${used} ${plural}`);
+  node.appendChild(h("span", { class: "tag", text: bits.join(", ") }));
+
+  /* The undo for labelling the wrong thing in bulk, which is one careless
+     click away in the review panel and used to need a hunt through the
+     rules list. Called Unlabel because the button that caused it says
+     Label. */
+  if (used) {
+    node.appendChild(armedButton(
+      "Unlabel", `Clear ${used}?`, "warn",
+      () => taxonCall(kind, row.id, { unassign: true }),
+      `Take this ${kind} off the ${used} ${plural} that assign it. `
+      + `The ${kind} itself stays, and nothing recorded is deleted.`,
+    ));
+  }
 
   if (kind === "client") {
     const toggle = h("button", {
       class: "act",
       text: row.archived ? "Restore" : "Archive",
+      title: row.archived
+        ? "Put this client back in the pickers."
+        : "Hide from the pickers without losing any history.",
     });
     toggle.addEventListener("click", () =>
       taxonCall(kind, row.id, { archived: !row.archived }));
     node.appendChild(toggle);
   }
 
-  node.appendChild(armedButton("Delete", "Really?", "danger", () =>
-    taxonCall(kind, row.id, { delete: true })));
+  node.appendChild(armedButton(
+    "Delete", "Delete?", "danger",
+    () => taxonCall(kind, row.id, { delete: true }),
+    used
+      ? `Remove the ${kind} and take it off ${used} ${plural}. `
+        + "Nothing recorded is deleted."
+      : `Remove the ${kind}. It is not used by any rule.`,
+  ));
 
   return node;
 }
@@ -1091,7 +1264,7 @@ function renderSummary(summary) {
   const timelineCard = $("timeline-card");
   if (window_.days === 1) {
     timelineCard.hidden = false;
-    $("timeline-note").textContent = `${window_.start_date} · hover any block`;
+    $("timeline-note").textContent = `${window_.start_date}, hover any block for detail`;
     dayStrip($("timeline"), summary.timeline || [], window_, summary.series.keys || categoryKeys);
   } else {
     timelineCard.hidden = true;
@@ -1130,8 +1303,8 @@ async function refresh() {
     state.labels = labels;
     renderDatalists(labels);
     renderSummary(summary);
-    if (state.rulesOpen) await renderRules();
-    if (state.setupOpen && !state.taxonomy) await renderSetup();
+    if (state.view === "rules") await renderRules();
+    if (state.view === "setup") await renderSetup();
   } catch (error) {
     note(`Could not load data: ${error.message}`);
   }
@@ -1141,6 +1314,10 @@ async function refresh() {
 async function pollStatus() {
   try {
     const status = await api("/api/status");
+    if (status.first_run && !state.welcomed) {
+      state.welcomed = true;
+      showWelcome();
+    }
     state.status = status;
     renderStatus(status);
     renderPause(status);
@@ -1204,14 +1381,6 @@ $("theme").addEventListener("click", () => {
   try { localStorage.setItem("theme", next); } catch (_) { /* ignore */ }
 });
 
-$("setup-toggle").addEventListener("click", async () => {
-  state.setupOpen = !state.setupOpen;
-  $("setup").hidden = !state.setupOpen;
-  $("setup-toggle").textContent = state.setupOpen ? "Hide" : "Show";
-  $("setup-toggle").setAttribute("aria-expanded", String(state.setupOpen));
-  if (state.setupOpen) await renderSetup();
-});
-
 $("category-add").addEventListener("submit", (event) => {
   event.preventDefault();
   addTaxon("category", $("category-new"));
@@ -1226,12 +1395,98 @@ document.addEventListener("click", (event) => {
   if (!event.target.closest(".swatch, .swatch-menu")) closeSwatchMenus();
 });
 
-$("rules-toggle").addEventListener("click", async () => {
-  state.rulesOpen = !state.rulesOpen;
-  $("rules").hidden = !state.rulesOpen;
-  $("rules-toggle").textContent = state.rulesOpen ? "Hide" : "Show";
-  $("rules-toggle").setAttribute("aria-expanded", String(state.rulesOpen));
-  if (state.rulesOpen) await renderRules();
+/* -- first run -----------------------------------------------------------
+ * Five seconds, no way out. The promise on that screen is the whole reason
+ * somebody is willing to run this, so it gets read rather than clicked past.
+ * The flag lives on the tracker, not in this browser, so a second browser
+ * does not see it again and a colleague's machine sees it exactly once. */
+
+const WELCOME_MS = 5000;
+
+function showWelcome() {
+  const screen = $("welcome");
+  const go = $("welcome-go");
+  screen.hidden = false;
+  document.body.style.overflow = "hidden";
+
+  // Focus is parked on the screen so a keyboard user is not tabbing around
+  // the dashboard behind it, and Escape does nothing on purpose.
+  screen.setAttribute("tabindex", "-1");
+  screen.focus({ preventScroll: true });
+  const trap = (event) => {
+    if (event.key === "Escape" || event.key === "Tab") event.preventDefault();
+  };
+  document.addEventListener("keydown", trap, true);
+
+  setTimeout(() => {
+    go.disabled = false;
+    go.focus({ preventScroll: true });
+  }, WELCOME_MS);
+
+  go.addEventListener("click", async () => {
+    if (go.disabled) return;
+    document.removeEventListener("keydown", trap, true);
+    screen.hidden = true;
+    document.body.style.overflow = "";
+    try {
+      await api("/api/welcome", {});
+    } catch (_) {
+      /* If this fails you simply get greeted again next time, which is a
+         better outcome than blocking the dashboard over it. */
+    }
+  });
+}
+
+/* -- routing ------------------------------------------------------------
+ * Three views in one page, addressed by hash so a section can be linked,
+ * bookmarked and reloaded into. No router library: there are three of them. */
+
+const VIEWS = ["dashboard", "setup", "rules"];
+
+async function showView(name, push = true) {
+  if (!VIEWS.includes(name)) name = "dashboard";
+  state.view = name;
+  for (const section of document.querySelectorAll(".view")) {
+    section.hidden = section.dataset.view !== name;
+  }
+  for (const button of $("views").querySelectorAll("button")) {
+    const on = button.dataset.view === name;
+    if (on) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  }
+  if (push && location.hash !== `#/${name}`) {
+    history.replaceState(null, "", `#/${name}`);
+  }
+  window.scrollTo({ top: 0 });
+
+  // Fetched when the section is opened rather than on every refresh, so the
+  // dashboard does not pay for two lists nobody is looking at.
+  if (name === "setup") await renderSetup();
+  if (name === "rules") await renderRules();
+}
+
+$("views").addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-view]");
+  if (button) showView(button.dataset.view);
+});
+
+window.addEventListener("hashchange", () => {
+  showView((location.hash || "").replace(/^#\/?/, ""), false);
+});
+
+$("rule-search").addEventListener("input", (event) => {
+  state.ruleSearch = event.target.value;
+  paintRules();
+});
+
+$("rule-source").addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-source]");
+  if (!button) return;
+  state.ruleSource = button.dataset.source;
+  for (const other of $("rule-source").querySelectorAll("button")) {
+    other.setAttribute("aria-selected", String(other === button));
+  }
+  paintRules();
 });
 
 let resizeTimer = null;
@@ -1260,3 +1515,5 @@ try { savedRange = localStorage.getItem("range") || "today"; } catch (_) { /* ig
 selectRange(savedRange);
 setInterval(pollStatus, 15000);
 setInterval(() => { if (LIVE_RANGES.has(state.range)) refresh(); }, 90000);
+
+showView((location.hash || "").replace(/^#\/?/, ""), false);

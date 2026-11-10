@@ -193,7 +193,9 @@ Expect `✓ server answering`, `✓ frontmost app detected`, and either
 `osascript` column must change as you switch. If it reports `STUCK`, stop and
 do not leave it in that state — every minute would be credited to one app.
 
-Finally, open **http://127.0.0.1:8734** and confirm:
+Finally, open **http://timetrack.localhost:8734** and confirm
+(**http://127.0.0.1:8734** works too, and is the fallback if a browser
+does not honour `.localhost`):
 
 - The green dot top-left is lit
 - An app name and a rising timer appear top-right

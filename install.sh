@@ -260,7 +260,8 @@ echo "  2. Chrome tab detail"
 echo "       chrome://extensions → Developer mode on → Load unpacked"
 echo "       choose:  $DIR/extension"
 echo
-echo "  Dashboard:  http://127.0.0.1:$PORT"
+echo "  Dashboard:  http://timetrack.localhost:$PORT"
+echo "              http://127.0.0.1:$PORT  (always works, including Safari)"
 echo "  Diagnose:   ./doctor.sh"
 echo "  Remove:     ./uninstall.sh"
 echo

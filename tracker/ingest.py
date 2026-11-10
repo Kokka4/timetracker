@@ -198,11 +198,27 @@ class BrowserIngest:
 
     def status(self) -> dict[str, Any]:
         with self._lock:
+            now = time.time()
             age = (
-                round(time.time() - self.last_heartbeat_at, 1)
+                round(now - self.last_heartbeat_at, 1)
                 if self.last_heartbeat_at
                 else None
             )
+            # The open tab, so a caller can say what is in front right now
+            # without having to ask the browser itself. The extension popup
+            # needs this to offer a label for what you are looking at.
+            current = None
+            session = self.sessions.get(self.last_browser or "")
+            if session is None and len(self.sessions) == 1:
+                session = next(iter(self.sessions.values()))
+            if session is not None:
+                url, title = session["key"]
+                current = {
+                    "url": url,
+                    "title": title,
+                    "domain": (url or "").split("/")[0] or None,
+                    "seconds": round(now - session["start"], 1),
+                }
             return {
                 "connected": age is not None and age < 180,
                 "heartbeats": self.heartbeats,
@@ -210,4 +226,5 @@ class BrowserIngest:
                 "last_heartbeat_age_seconds": age,
                 "browser": self.last_browser,
                 "open_sessions": len(self.sessions),
+                "current": current,
             }

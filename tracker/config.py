@@ -15,6 +15,12 @@ DEFAULTS: dict[str, Any] = {
     "sample_interval_seconds": 5.0,
     "idle_threshold_seconds": 180,
     "min_event_seconds": 2.0,
+    # The floor for the review queue. Sub-minute glances are worth recording
+    # and not worth deciding about: a queue full of forty-second rows is a
+    # queue nobody works through, and the blocks that move the hours-per-
+    # client number are the long ones. The time is still counted either way,
+    # it just stops asking you about it.
+    "review_min_seconds": 60,
     "capture_window_titles": True,
     "browser_heartbeat_timeout_seconds": 90,
     "strip_query_strings": True,
@@ -66,6 +72,7 @@ class Config:
         self.sample_interval: float = max(1.0, float(merged["sample_interval_seconds"]))
         self.idle_threshold: float = max(30.0, float(merged["idle_threshold_seconds"]))
         self.min_event: float = max(0.0, float(merged["min_event_seconds"]))
+        self.review_min: float = max(0.0, float(merged["review_min_seconds"]))
         self.capture_titles: bool = bool(merged["capture_window_titles"])
         self.browser_timeout: float = max(
             15.0, float(merged["browser_heartbeat_timeout_seconds"])

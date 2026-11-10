@@ -4,74 +4,68 @@
 <meta charset="utf-8">
 <title>Local Time Tracker</title>
 <style>
-  /* Dark on purpose rather than by preference: this popup is a readout on a
-     background process, and it sits over whatever page you were on. A fixed
-     dark surface reads as instrumentation instead of as part of the page. */
+  /* Dark by choice rather than by system preference: this is a readout on a
+     background process, sitting over whatever page you were already on. A
+     fixed dark surface reads as instrumentation instead of as part of it. */
   :root {
     color-scheme: dark;
-    --bg:        #0a0c10;
-    --bg-lift:   #10141a;
-    --panel:     #141920;
-    --line:      #222a34;
-    --line-soft: #1a212a;
-    --ink:       #e9eef5;
-    --ink-2:     #97a3b4;
-    --muted:     #5e6b7c;
-    --accent:    #4da3ff;
-    --live:      #2ee6a8;
-    --bad:       #ff5f5f;
+    --bg:        #0b0d12;
+    --card:      #141922;
+    --card-2:    #1a212c;
+    --line:      #232c3a;
+    --line-soft: #1b2230;
+    --ink:       #eaeff6;
+    --ink-2:     #94a2b6;
+    --muted:     #5c6a7e;
+    --accent:    #4d9dff;
+    --live:      #2fe3a8;
+    --bad:       #ff6161;
     --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+    --r:  14px;
+    --r2: 10px;
   }
 
   * { box-sizing: border-box; }
 
   body {
-    width: 304px;
+    width: 330px;
     margin: 0;
-    padding: 0;
-    background: var(--bg);
+    padding: 14px;
+    background:
+      radial-gradient(130% 60% at 50% -10%, rgba(77, 157, 255, 0.11), transparent 70%),
+      var(--bg);
     color: var(--ink);
     font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
     -webkit-font-smoothing: antialiased;
   }
 
-  /* A hairline of light along the top edge, so the panel reads as a surface
-     with a light source rather than a flat rectangle. */
-  .sheet {
-    position: relative;
-    padding: 14px 15px 15px;
-    background:
-      radial-gradient(120% 70% at 50% -20%, rgba(77, 163, 255, 0.10), transparent 70%),
-      var(--bg);
-  }
-  .sheet::before {
-    content: "";
-    position: absolute;
-    inset: 0 0 auto;
-    height: 1px;
-    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.16), transparent);
-  }
-
-  h1 {
-    margin: 0 0 14px;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--ink-2);
+  .head {
     display: flex;
     align-items: center;
     gap: 8px;
+    margin-bottom: 14px;
   }
+  .head h1 {
+    margin: 0;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+  }
+  .spacer { margin-left: auto; }
 
-  .dot {
-    width: 7px; height: 7px;
-    border-radius: 50%;
-    background: var(--muted);
-    flex: none;
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
+  .dot.ok  { background: var(--live); box-shadow: 0 0 0 3px rgba(47,227,168,0.16); }
+  .dot.bad { background: var(--bad);  box-shadow: 0 0 0 3px rgba(255,97,97,0.15); }
+
+  .eyebrow {
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
   }
-  .dot.ok  { background: var(--live); box-shadow: 0 0 0 3px rgba(46,230,168,0.15); }
-  .dot.bad { background: var(--bad);  box-shadow: 0 0 0 3px rgba(255,95,95,0.14); }
 
   .today {
     font-family: var(--mono);
@@ -80,134 +74,218 @@
     letter-spacing: -0.02em;
     font-variant-numeric: tabular-nums;
     line-height: 1.05;
-    color: var(--ink);
+    margin-top: 3px;
   }
-  .sub {
-    margin-top: 5px;
-    color: var(--ink-2);
-    font-size: 11.5px;
-    min-height: 16px;
-  }
+  .sub { margin-top: 5px; color: var(--ink-2); font-size: 11.5px; min-height: 16px; }
   .sub .err { color: var(--bad); }
 
-  label, .field-label {
-    display: block;
-    font-size: 9.5px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-    color: var(--muted);
-    margin: 16px 0 6px;
-  }
-  /* An explicit display beats the browser's [hidden] rule, so anything given
-     one here has to opt back in or the attribute silently does nothing. */
-  label[hidden], .field-label[hidden], .pause-row[hidden], .row[hidden] { display: none; }
+  /* -- the card for what is in front right now ------------------------- */
 
-  input[type=text] {
+  .card {
+    margin-top: 14px;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+    background: var(--card);
+  }
+  .card[hidden] { display: none; }
+
+  .now-head { display: flex; align-items: baseline; gap: 8px; }
+  .now-timer {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 15px;
+    font-variant-numeric: tabular-nums;
+    color: var(--live);
+  }
+  .now-what {
+    margin-top: 7px;
+    font-size: 14px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .now-meta {
+    margin-top: 2px;
+    font-size: 11px;
+    color: var(--ink-2);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 11px; }
+
+  input[type=text], select {
     width: 100%;
     font: inherit;
-    font-family: var(--mono);
-    font-size: 10px;
-    padding: 7px 9px;
+    font-size: 12px;
+    padding: 8px 9px;
     border: 1px solid var(--line);
-    border-radius: 7px;
-    background: var(--bg-lift);
-    color: var(--ink-2);
+    border-radius: var(--r2);
+    background: var(--card-2);
+    color: var(--ink);
+    appearance: none;
   }
-  input[type=text]:focus {
+  input[type=text]::placeholder { color: var(--muted); }
+  input[type=text]:focus, select:focus {
     outline: none;
     border-color: var(--accent);
-    color: var(--ink);
   }
+  select { margin-top: 7px; cursor: pointer; }
+  #endpoint { font-family: var(--mono); font-size: 10px; color: var(--ink-2); }
 
-  .row { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
+  /* -- buttons ---------------------------------------------------------- */
 
   button {
     font: inherit;
-    font-size: 12px;
-    padding: 8px 12px;
-    border-radius: 8px;
+    font-size: 12.5px;
+    padding: 9px 13px;
+    border-radius: var(--r2);
     border: 1px solid var(--line);
-    background: var(--panel);
+    background: var(--card);
     color: var(--ink);
     cursor: pointer;
-    transition: background 90ms ease, border-color 90ms ease;
+    transition: background 90ms ease, border-color 90ms ease, opacity 90ms ease;
   }
-  button:hover:not(:disabled) { background: #1a212b; border-color: #2e3844; }
-  button:active:not(:disabled) { background: #0f141b; }
+  button:hover:not(:disabled) { background: var(--card-2); border-color: #2d3848; }
+  button:active:not(:disabled) { opacity: 0.85; }
   button:disabled { opacity: 0.4; cursor: default; }
   button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-  button.primary {
-    flex: 1;
+  .wide { width: 100%; margin-top: 8px; }
+  .primary {
     background: var(--accent);
     border-color: transparent;
-    color: #04111f;
+    color: #04121f;
     font-weight: 650;
   }
-  button.primary:hover:not(:disabled) { background: #65b0ff; border-color: transparent; }
-
-  button.resume {
-    flex: 1;
+  .primary:hover:not(:disabled) { background: #69acff; border-color: transparent; }
+  .resume {
     background: var(--live);
     border-color: transparent;
-    color: #04231a;
+    color: #042219;
     font-weight: 650;
   }
-  button.resume:hover:not(:disabled) { background: #4ff0b8; border-color: transparent; }
-  button.resume[hidden] { display: none; }
+  .resume:hover:not(:disabled) { background: #4ef0bb; border-color: transparent; }
+  .resume[hidden] { display: none; }
 
-  .pause-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
-  .pause-row button { padding: 8px 0; text-align: center; font-size: 11.5px; }
-  .pause-row button:last-child {
-    grid-column: 1 / -1;
-    color: var(--ink-2);
-  }
+  .row { display: flex; gap: 8px; margin-top: 12px; }
+  .row > button { flex: 1; }
+  .row[hidden] { display: none; }
+
+  .pause-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin-top: 7px; }
+  .pause-row button { padding: 8px 0; text-align: center; font-size: 12px; }
+  .pause-row button:last-child { grid-column: 1 / -1; color: var(--ink-2); }
+  .pause-row[hidden] { display: none; }
+
+  .label-block { margin-top: 16px; }
+  .label-block[hidden] { display: none; }
+  .eyebrow[hidden] { display: none; }
+
+  /* -- states ----------------------------------------------------------- */
 
   .banner {
     display: none;
-    margin-bottom: 13px;
-    padding: 10px 11px;
-    border: 1px solid rgba(255, 95, 95, 0.38);
+    margin-top: 12px;
+    padding: 11px 12px;
+    border: 1px solid rgba(255,97,97,0.36);
     border-left: 3px solid var(--bad);
-    border-radius: 8px;
-    background: rgba(255, 95, 95, 0.09);
+    border-radius: var(--r2);
+    background: rgba(255,97,97,0.09);
     font-size: 11.5px;
     line-height: 1.45;
     color: var(--ink-2);
   }
   .banner.on { display: block; }
   .banner b { color: var(--bad); }
+  .banner code {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--ink);
+  }
+
+  /* Collapses when there is nothing to say, rather than reserving a line of
+     empty space under the button for the whole time you are not labelling. */
+  .ok-flash {
+    margin-top: 9px;
+    font-size: 11.5px;
+    line-height: 1.4;
+    color: var(--live);
+  }
+  .ok-flash:empty { display: none; }
 
   .note {
-    margin-top: 14px;
+    margin-top: 15px;
     padding-top: 12px;
     border-top: 1px solid var(--line-soft);
     color: var(--muted);
     font-size: 10.5px;
     line-height: 1.5;
   }
+  details.more > summary {
+    margin-top: 14px;
+    font-size: 10.5px;
+    color: var(--muted);
+    cursor: pointer;
+    list-style: none;
+  }
+  details.more > summary::-webkit-details-marker { display: none; }
+  details.more > summary:hover { color: var(--ink-2); }
+  details.more label {
+    display: block;
+    margin: 10px 0 6px;
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
 
   .off .today { color: var(--muted); }
 </style>
 </head>
 <body>
-<div class="sheet">
-  <h1><span class="dot" id="dot"></span> Local Time Tracker</h1>
-
-  <div class="banner" id="banner">
-    <b>Tracking is off.</b> <span id="banner-detail"></span>
+  <div class="head">
+    <span class="dot" id="dot"></span>
+    <h1>Local Time Tracker</h1>
+    <span class="spacer"></span>
+    <button class="resume" id="resume" hidden>Resume</button>
   </div>
 
+  <div class="banner" id="banner">
+    <b id="banner-title">Tracking is off.</b> <span id="banner-detail"></span>
+  </div>
+
+  <div class="eyebrow">Today</div>
   <div class="today" id="today">&mdash;</div>
   <div class="sub" id="state">checking&hellip;</div>
 
-  <div class="row">
-    <button class="primary" id="open">Open dashboard</button>
-    <button class="resume" id="resume" hidden>Resume tracking</button>
+  <div class="card" id="now" hidden>
+    <div class="now-head">
+      <span class="eyebrow">Now tracking</span>
+      <span class="now-timer" id="now-timer">0:00</span>
+    </div>
+    <div class="now-what" id="now-what"></div>
+    <div class="now-meta" id="now-meta"></div>
+
+    <div class="label-block" id="label-block">
+      <div class="fields">
+        <input type="text" id="client" list="clients" placeholder="client" autocomplete="off">
+        <input type="text" id="category" list="categories" placeholder="category" autocomplete="off">
+      </div>
+      <select id="scope" aria-label="How far this label should reach"></select>
+      <button class="primary wide" id="label">Label this</button>
+      <div class="ok-flash" id="flash"></div>
+    </div>
   </div>
 
-  <span class="field-label" id="pause-label">Stop recording for</span>
+  <div class="row" id="actions">
+    <button class="primary" id="open">Open dashboard</button>
+  </div>
+
+  <span class="eyebrow" id="pause-label" style="display:block;margin-top:16px">Stop recording for</span>
   <div class="pause-row" id="pause-row">
     <button data-minutes="30">30 min</button>
     <button data-minutes="60">1 h</button>
@@ -215,12 +293,16 @@
     <button data-minutes="">Until I turn it back on</button>
   </div>
 
-  <label for="endpoint">Tracker endpoint</label>
-  <input type="text" id="endpoint" spellcheck="false" autocomplete="off">
+  <details class="more">
+    <summary>Settings</summary>
+    <label for="endpoint">Tracker endpoint</label>
+    <input type="text" id="endpoint" spellcheck="false" autocomplete="off">
+    <div class="note">Tab titles and URLs go to that address and nowhere else.
+      Incognito windows are never reported.</div>
+  </details>
 
-  <div class="note" id="note">Tab titles and URLs go to that address and nowhere
-    else. Incognito windows are never reported.</div>
-</div>
+  <datalist id="clients"></datalist>
+  <datalist id="categories"></datalist>
 </body>
 <script src="popup.js"></script>
 </html>

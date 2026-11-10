@@ -110,6 +110,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_name
 """
 
 
+# The categorical palette. Slots rather than hex, because the dashboard
+# defines each one twice, for light and for dark, and a stored hex would be
+# unreadable in one of them. Storage owns the vocabulary because storage is
+# what has to keep two categories from claiming the same colour.
+PALETTE = ("s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8")
+
+
 def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     return {k: row[k] for k in row.keys()}
 
@@ -419,8 +426,18 @@ class Store:
     # at a category that no longer exists, which is worse than not renaming.
 
     def categories(self) -> list[dict[str, Any]]:
+        """Every category, with how many rules currently assign it.
+
+        The count is what makes the destructive actions honest: "Delete" next
+        to a name you labelled forty things with should say so before you
+        press it, not after.
+        """
         rows = self.conn().execute(
-            "SELECT * FROM categories ORDER BY sort_order ASC, name COLLATE NOCASE ASC"
+            "SELECT c.*,"
+            " (SELECT COUNT(*) FROM rules r"
+            "  WHERE r.category = c.name COLLATE NOCASE) AS rule_count"
+            " FROM categories c"
+            " ORDER BY c.sort_order ASC, c.name COLLATE NOCASE ASC"
         ).fetchall()
         return [_row_to_dict(r) for r in rows]
 
@@ -429,6 +446,26 @@ class Store:
             "SELECT * FROM categories WHERE name = ? COLLATE NOCASE", (name,)
         ).fetchone()
         return _row_to_dict(row) if row else None
+
+    def free_color(self, preferred: str | None = None) -> str:
+        """A palette slot nothing else is using, preferring the one asked for.
+
+        Catalogue colours are written independently — the starter set does not
+        know which packs will be turned on later — so two of them can easily
+        name the same slot. Resolving it here rather than in the chart keeps
+        the swatch in Settings honest: what you see next to a category really
+        is the colour it draws in.
+
+        Past eight categories some sharing is unavoidable, so the least-used
+        slot wins and the chart's top-N cutoff keeps that out of sight.
+        """
+        counts = {slot: 0 for slot in PALETTE}
+        for row in self.conn().execute("SELECT color FROM categories"):
+            if row["color"] in counts:
+                counts[row["color"]] += 1
+        if preferred in counts and counts[preferred] == 0:
+            return preferred
+        return min(PALETTE, key=lambda slot: (counts[slot], PALETTE.index(slot)))
 
     def add_category(
         self,
@@ -445,6 +482,10 @@ class Store:
             existing = self.category_named(name)
             if existing:
                 return int(existing["id"])
+            # Only automatic assignment avoids collisions. A colour picked by
+            # hand in Settings goes through update_category and is honoured
+            # exactly, even if it duplicates another.
+            color = self.free_color(color)
             cur = self._write(
                 "INSERT INTO categories (name, color, sort_order, source, created_ts)"
                 " VALUES (?, ?, ?, ?, ?)",
@@ -499,39 +540,73 @@ class Store:
                 ).fetchone()
             )
 
-    def delete_category(self, category_id: int) -> dict[str, Any]:
-        """Remove a category and release the rules that assigned it.
+    def _release(self, field: str, name: str) -> dict[str, Any]:
+        """Take a name off every rule that assigns it.
 
-        A rule that existed only to set this category has nothing left to say
-        and goes too; a rule that also sets a client keeps the client.
+        Mislabelling in bulk is one click in the review panel and used to be
+        unrecoverable without hunting through the rules list, so this is the
+        undo. A rule that existed only to set this name has nothing left to
+        say and goes; a rule that also sets the other field keeps it, with
+        the released half cleared.
+
+        Nothing recorded is touched. Classification is computed from the
+        rules when you look, so the history simply stops claiming this name.
         """
+        if field not in ("client", "category"):
+            raise ValueError(f"cannot release {field!r}")
         with self._write_lock:
-            row = self.conn().execute(
-                "SELECT * FROM categories WHERE id = ?", (category_id,)
-            ).fetchone()
-            if not row:
-                return {"deleted": False}
-            name = row["name"]
-            self._write(
-                "UPDATE rules SET category = NULL WHERE category = ? COLLATE NOCASE",
+            cleared = self._write(
+                f"UPDATE rules SET {field} = NULL WHERE {field} = ? COLLATE NOCASE",
                 (name,),
             )
             emptied = self._write(
                 "DELETE FROM rules WHERE client IS NULL AND project IS NULL"
                 " AND category IS NULL"
             )
-            self._write("DELETE FROM categories WHERE id = ?", (category_id,))
             return {
-                "deleted": True,
                 "name": name,
+                "rules_cleared": cleared.rowcount or 0,
                 "rules_removed": emptied.rowcount or 0,
             }
 
+    def unassign_category(self, category_id: int) -> dict[str, Any]:
+        """Clear a category off everything, but keep the category itself."""
+        row = self.conn().execute(
+            "SELECT * FROM categories WHERE id = ?", (category_id,)
+        ).fetchone()
+        if not row:
+            return {"ok": False}
+        return {"ok": True, "kept": True, **self._release("category", row["name"])}
+
+    def unassign_client(self, client_id: int) -> dict[str, Any]:
+        row = self.conn().execute(
+            "SELECT * FROM clients WHERE id = ?", (client_id,)
+        ).fetchone()
+        if not row:
+            return {"ok": False}
+        return {"ok": True, "kept": True, **self._release("client", row["name"])}
+
+    def delete_category(self, category_id: int) -> dict[str, Any]:
+        with self._write_lock:
+            row = self.conn().execute(
+                "SELECT * FROM categories WHERE id = ?", (category_id,)
+            ).fetchone()
+            if not row:
+                return {"deleted": False}
+            released = self._release("category", row["name"])
+            self._write("DELETE FROM categories WHERE id = ?", (category_id,))
+            return {"deleted": True, **released}
+
     def clients(self, include_archived: bool = True) -> list[dict[str, Any]]:
-        sql = "SELECT * FROM clients"
+        sql = (
+            "SELECT c.*,"
+            " (SELECT COUNT(*) FROM rules r"
+            "  WHERE r.client = c.name COLLATE NOCASE) AS rule_count"
+            " FROM clients c"
+        )
         if not include_archived:
-            sql += " WHERE archived = 0"
-        sql += " ORDER BY name COLLATE NOCASE ASC"
+            sql += " WHERE c.archived = 0"
+        sql += " ORDER BY c.name COLLATE NOCASE ASC"
         return [_row_to_dict(r) for r in self.conn().execute(sql).fetchall()]
 
     def client_named(self, name: str) -> dict[str, Any] | None:
@@ -610,21 +685,9 @@ class Store:
             ).fetchone()
             if not row:
                 return {"deleted": False}
-            name = row["name"]
-            self._write(
-                "UPDATE rules SET client = NULL WHERE client = ? COLLATE NOCASE",
-                (name,),
-            )
-            emptied = self._write(
-                "DELETE FROM rules WHERE client IS NULL AND project IS NULL"
-                " AND category IS NULL"
-            )
+            released = self._release("client", row["name"])
             self._write("DELETE FROM clients WHERE id = ?", (client_id,))
-            return {
-                "deleted": True,
-                "name": name,
-                "rules_removed": emptied.rowcount or 0,
-            }
+            return {"deleted": True, **released}
 
     def categories_in_use(self) -> set[str]:
         rows = self.conn().execute(

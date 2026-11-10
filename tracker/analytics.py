@@ -293,6 +293,7 @@ def summarize(
     afk_rows: list[dict[str, Any]],
     window: dict[str, Any],
     series_limit: int = 7,
+    review_min_seconds: float = 60.0,
 ) -> dict[str, Any]:
     total = sum(b["seconds"] for b in blocks)
 
@@ -417,7 +418,8 @@ def summarize(
             "data": [[round(v, 1) for v in row] for row in matrix],
         },
         "timeline": timeline(blocks),
-        "unlabelled": unlabelled(blocks),
+        "unlabelled": unlabelled(blocks, min_seconds=review_min_seconds),
+        "review_min_seconds": review_min_seconds,
     }
 
 
@@ -507,7 +509,9 @@ def timeline(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def unlabelled(
-    blocks: list[dict[str, Any]], limit: int = 25
+    blocks: list[dict[str, Any]],
+    limit: int = 25,
+    min_seconds: float = 60.0,
 ) -> list[dict[str, Any]]:
     """Blocks with no client, grouped so one click can label a whole group.
 
@@ -515,6 +519,15 @@ def unlabelled(
     and after. A 12-minute block in an AI app means nothing alone; the same
     block surrounded by one client's campaign work almost always belongs to
     that client, and this is what lets you see that at a glance.
+
+    Groups totalling less than `min_seconds` are left out. Every one of those
+    rows costs a decision and returns almost no attributed time, and a queue
+    of forty-second glances is one you stop opening. The time is still
+    recorded and still counted in every total; it simply stops asking.
+
+    `first_ts` and `last_ts` say when the group happened, because "which
+    client was this" is a question you answer by remembering the afternoon,
+    not by recognising a window title.
     """
     groups: dict[tuple[str, str], dict[str, Any]] = {}
     for position, block in enumerate(blocks):
@@ -532,14 +545,25 @@ def unlabelled(
                 "seconds": 0.0,
                 "blocks": 0,
                 "positions": [],
+                "first_ts": block["start"],
+                "last_ts": block["end"],
+                "longest": 0.0,
+                "days": set(),
             }
             groups[key] = group
         group["seconds"] += block["seconds"]
         group["blocks"] += 1
+        group["first_ts"] = min(group["first_ts"], block["start"])
+        group["last_ts"] = max(group["last_ts"], block["end"])
+        group["longest"] = max(group["longest"], block["seconds"])
+        group["days"].add(
+            datetime.fromtimestamp(block["start"]).strftime("%Y-%m-%d")
+        )
         if len(group["positions"]) < 40:
             group["positions"].append(position)
 
-    ordered = sorted(groups.values(), key=lambda g: -g["seconds"])[:limit]
+    worth_deciding = [g for g in groups.values() if g["seconds"] >= min_seconds]
+    ordered = sorted(worth_deciding, key=lambda g: -g["seconds"])[:limit]
 
     for group in ordered:
         neighbours: dict[str, float] = {}
@@ -557,6 +581,9 @@ def unlabelled(
             for client, seconds in sorted(neighbours.items(), key=lambda kv: -kv[1])[:3]
         ]
         group["seconds"] = round(group["seconds"], 1)
+        group["longest"] = round(group["longest"], 1)
+        group["day_count"] = len(group["days"])
+        group.pop("days", None)
         group.pop("positions", None)
 
     return ordered
