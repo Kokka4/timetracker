@@ -20,8 +20,7 @@ import threading
 import time
 from datetime import datetime
 
-from . import config, db
-from . import rules as rules_mod
+from . import config, db, taxonomy
 from .ingest import BrowserIngest
 from .pause import Pause
 from .server import Context, serve
@@ -41,7 +40,7 @@ def run() -> int:
     cfg.log_dir.mkdir(parents=True, exist_ok=True)
 
     store = db.Store(cfg.db_path)
-    seeded = store.seed_rules(rules_mod.SEED_RULES)
+    setup = taxonomy.ensure(store, backup_dir=cfg.db_path.parent / "backups")
 
     ingest = BrowserIngest(cfg, store)
     pause = Pause(store)
@@ -61,8 +60,18 @@ def run() -> int:
     log(f"  dashboard http://{cfg.host}:{cfg.port}")
     log(f"  sampling  every {cfg.sample_interval}s, idle after {cfg.idle_threshold}s")
     log(f"  titles    {'on' if cfg.capture_titles else 'off'}")
-    if seeded:
-        log(f"  seeded    {seeded} starter rules")
+    if setup.get("ran"):
+        case = setup.get("case")
+        if case == "fresh":
+            log(f"  starter   {len(taxonomy.STARTER_CATEGORIES)} categories installed")
+        elif case == "upgraded-from-defaults":
+            log(f"  upgraded  {setup['legacy_rules_replaced']} old default rules "
+                f"replaced by the starter set + "
+                f"{', '.join(setup['packs_applied'])} packs")
+        if setup.get("backup"):
+            log(f"  backup    {setup['backup']}")
+        if setup.get("backup_error"):
+            log(f"  WARNING   could not back up first: {setup['backup_error']}")
 
     # Say this loudly. A pause survives a restart on purpose, which means an
     # agent relaunched by launchd can come up recording nothing, and the log

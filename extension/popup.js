@@ -44,7 +44,10 @@ let config = { endpoint: "http://127.0.0.1:8734/api/ingest/chrome" };
    popup never holds an opinion about whether tracking is on. */
 
 function paintPause(pause) {
-  const paused = Boolean(pause && pause.paused);
+  /* A cached state from a tracker we can no longer reach is not a pause.
+     Nothing is being recorded either way, but telling someone they switched
+     it off when they did not is how a day goes missing. */
+  const paused = Boolean(pause && pause.paused && pause.reachable !== false);
   document.body.classList.toggle("off", paused);
   $("banner").classList.toggle("on", paused);
   $("resume").hidden = !paused;
@@ -71,21 +74,26 @@ async function paint() {
 
   const pause = reply.pause || null;
   paintPause(pause);
-
-  if (pause && pause.paused) {
-    $("dot").className = "dot bad";
-    $("today").textContent = dur(0);
-    $("state").textContent = "nothing is being recorded, by either half";
-    return;
-  }
+  const paused = Boolean(pause && pause.paused && pause.reachable !== false);
 
   try {
     const response = await fetch(`${base(config.endpoint)}/api/status`);
     const status = await response.json();
     const watcher = status.watcher || {};
     const browser = status.browser || {};
-    $("dot").className = `dot ${browser.connected ? "ok" : "bad"}`;
+
+    /* The day's total is still shown while paused, dimmed rather than
+       blanked. A pause is a decision about the next hour, and blanking what
+       you have already done makes it look like the pause cost you the day. */
     $("today").textContent = dur(status.today_seconds);
+
+    if (paused) {
+      $("dot").className = "dot bad";
+      $("state").textContent = "paused · nothing is being recorded, by either half";
+      return;
+    }
+
+    $("dot").className = `dot ${browser.connected ? "ok" : "bad"}`;
     $("state").textContent = browser.connected
       ? `connected · ${browser.heartbeats} heartbeats${
           watcher.current ? ` · now in ${watcher.current.app}` : ""

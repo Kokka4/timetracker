@@ -8,17 +8,8 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 /* Categorical slots are used in this order and no other: the palette's
    colourblind separation was validated on *adjacent* slot pairs, so skipping
    or cycling them quietly breaks that guarantee. */
-const SLOTS = [
-  "var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)",
-  "var(--s5)", "var(--s6)", "var(--s7)", "var(--s8)",
-];
-
-/* Colour follows the category, never its size, so a quiet day does not
-   repaint yesterday's chart. Slots are handed out by position in this list. */
-const CATEGORY_ORDER = [
-  "Outreach ops", "List building", "Building", "AI work", "Docs", "Email",
-  "Comms", "LinkedIn", "Design", "Admin", "Break", "Unlabelled", "Other",
-];
+const SLOT_NAMES = ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8"];
+const SLOTS = SLOT_NAMES.map((name) => `var(--${name})`);
 
 const LIVE_RANGES = new Set(["today", "week", "this_month", "month"]);
 
@@ -26,8 +17,10 @@ const state = {
   range: "today",
   summary: null,
   status: null,
-  labels: { clients: [], categories: [], projects: [] },
+  labels: { clients: [], categories: [], projects: [], colors: {} },
+  taxonomy: null,
   rulesOpen: false,
+  setupOpen: false,
 };
 
 /* -- small helpers ------------------------------------------------------ */
@@ -100,17 +93,35 @@ function hashString(text) {
   return Math.abs(value);
 }
 
-function masterIndex(key) {
-  const found = CATEGORY_ORDER.indexOf(key);
-  return found >= 0 ? found : CATEGORY_ORDER.length + (hashString(key) % 97);
-}
+/* Colour follows the key, never its size, so a quiet day does not repaint
+   yesterday's chart.
 
+   A category that has been given a colour in Settings keeps it everywhere and
+   always, which is the point of letting people choose one. Everything else —
+   apps, sites, clients, and categories nobody has picked for — is handed the
+   remaining slots in order, because the palette's colourblind separation was
+   validated on adjacent pairs and hashing into it would break that. Ordering
+   is by a hash of the name rather than by size, so the assignment is the same
+   on Monday as on Friday. */
 function assignSlots(keys) {
-  const ordered = keys.slice().sort(
-    (a, b) => masterIndex(a) - masterIndex(b) || a.localeCompare(b)
-  );
+  const colors = (state.labels && state.labels.colors) || {};
   const map = new Map();
-  ordered.forEach((key, i) => map.set(key, SLOTS[Math.min(i, SLOTS.length - 1)]));
+  const taken = new Set();
+
+  for (const key of keys) {
+    const at = SLOT_NAMES.indexOf(colors[key]);
+    if (at >= 0) {
+      map.set(key, SLOTS[at]);
+      taken.add(at);
+    }
+  }
+
+  const rest = keys
+    .filter((key) => !map.has(key))
+    .sort((a, b) => (hashString(a) % 9973) - (hashString(b) % 9973) || a.localeCompare(b));
+  let pool = SLOTS.map((_, i) => i).filter((i) => !taken.has(i));
+  if (!pool.length) pool = SLOTS.map((_, i) => i);
+  rest.forEach((key, i) => map.set(key, SLOTS[pool[Math.min(i, pool.length - 1)]]));
   return map;
 }
 
@@ -718,6 +729,213 @@ function note(message) {
   setTimeout(() => banner.remove(), 6000);
 }
 
+/* -- your setup --------------------------------------------------------- */
+
+function sourceLabel(source) {
+  if (!source || source === "user") return "yours";
+  if (source === "starter") return "starter";
+  if (source.startsWith("pack:")) {
+    const pack = (state.taxonomy ? state.taxonomy.packs : []).find(
+      (p) => p.id === source.slice(5)
+    );
+    return pack ? pack.name.toLowerCase() : "pack";
+  }
+  return source;
+}
+
+function closeSwatchMenus() {
+  for (const node of document.querySelectorAll(".swatch-menu")) node.remove();
+}
+
+function swatchButton(row, onPick) {
+  const button = h("button", {
+    class: "swatch",
+    title: "Change colour",
+    "aria-label": `Colour for ${row.name}`,
+  });
+  button.style.background = row.color ? `var(--${row.color})` : "var(--axis)";
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const open = button.parentNode.querySelector(".swatch-menu");
+    closeSwatchMenus();
+    if (open) return;
+    const menu = h("div", { class: "swatch-menu" });
+    for (const name of SLOT_NAMES) {
+      const chip = h("button", {
+        title: name,
+        "aria-label": name,
+        "aria-pressed": String(row.color === name),
+      });
+      chip.style.background = `var(--${name})`;
+      chip.addEventListener("click", (pick) => {
+        pick.stopPropagation();
+        closeSwatchMenus();
+        onPick(name);
+      });
+      menu.appendChild(chip);
+    }
+    button.parentNode.appendChild(menu);
+  });
+  return button;
+}
+
+/* Deleting can take rules with it, so it asks. Inline rather than through
+   confirm(), which blocks the page and cannot be styled or tested. */
+function armedButton(label, armedLabel, className, onConfirm) {
+  const button = h("button", { class: `act ${className}`, text: label });
+  let armed = false;
+  let timer = null;
+  button.addEventListener("click", () => {
+    if (armed) {
+      clearTimeout(timer);
+      onConfirm();
+      return;
+    }
+    armed = true;
+    button.textContent = armedLabel;
+    button.classList.add("armed");
+    timer = setTimeout(() => {
+      armed = false;
+      button.textContent = label;
+      button.classList.remove("armed");
+    }, 4000);
+  });
+  return button;
+}
+
+/* "category" does not pluralise by adding an s, and the endpoint is
+   /api/categories. One map rather than two near-misses. */
+const TAXON_PATH = { category: "categories", client: "clients" };
+
+async function taxonCall(kind, id, body) {
+  try {
+    await api(`/api/${TAXON_PATH[kind]}/${id}`, body);
+    await renderSetup();
+    await refresh();
+  } catch (error) {
+    note(error.message);
+    await renderSetup();
+  }
+}
+
+function taxonRow(row, kind) {
+  const node = h("div", { class: "taxon-row" });
+
+  if (kind === "category") {
+    node.appendChild(swatchButton(row, (color) => taxonCall(kind, row.id, { color })));
+  }
+
+  const name = h("input", { class: "name", value: row.name, maxlength: "60" });
+  if (row.archived) name.classList.add("archived");
+  name.addEventListener("change", () => {
+    const next = name.value.trim();
+    if (!next || next === row.name) {
+      name.value = row.name;
+      return;
+    }
+    taxonCall(kind, row.id, { name: next });
+  });
+  node.appendChild(name);
+
+  node.appendChild(h("span", {
+    class: "tag",
+    text: kind === "client"
+      ? (row.archived ? "archived" : "")
+      : sourceLabel(row.source),
+  }));
+
+  if (kind === "client") {
+    const toggle = h("button", {
+      class: "act",
+      text: row.archived ? "Restore" : "Archive",
+    });
+    toggle.addEventListener("click", () =>
+      taxonCall(kind, row.id, { archived: !row.archived }));
+    node.appendChild(toggle);
+  }
+
+  node.appendChild(armedButton("Delete", "Really?", "danger", () =>
+    taxonCall(kind, row.id, { delete: true })));
+
+  return node;
+}
+
+function renderTaxonList(host, rows, kind) {
+  clear(host);
+  if (!rows.length) {
+    host.appendChild(h("div", {
+      class: "setup-note",
+      text: kind === "client"
+        ? "No clients yet. Add one here, or label a block above."
+        : "No categories yet.",
+    }));
+    return;
+  }
+  for (const row of rows) host.appendChild(taxonRow(row, kind));
+}
+
+function renderPacks(host, packs) {
+  clear(host);
+  for (const pack of packs) {
+    const node = h("div", { class: `pack${pack.installed ? " on" : ""}` });
+    const main = h("div", { class: "pack-main" }, [
+      h("div", { class: "pack-name", text: pack.name }),
+      h("div", { class: "pack-blurb", text: pack.blurb }),
+    ]);
+    const cats = h("div", { class: "pack-cats" });
+    for (const name of pack.categories) cats.appendChild(h("span", { text: name }));
+    main.appendChild(cats);
+    node.appendChild(main);
+
+    const button = h("button", {
+      text: pack.installed ? "Turn off" : "Turn on",
+      "data-pack": pack.id,
+    });
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      try {
+        await api(`/api/packs/${pack.id}`, { apply: !pack.installed });
+        await renderSetup();
+        await refresh();
+      } catch (error) {
+        note(error.message);
+        button.disabled = false;
+      }
+    });
+    node.appendChild(button);
+    host.appendChild(node);
+  }
+}
+
+async function renderSetup() {
+  let data;
+  try {
+    data = await api("/api/taxonomy");
+  } catch (error) {
+    note(`Could not load your setup: ${error.message}`);
+    return;
+  }
+  state.taxonomy = data;
+  renderTaxonList($("category-list"), data.categories, "category");
+  renderTaxonList($("client-list"), data.clients, "client");
+  renderPacks($("pack-list"), data.packs);
+  $("category-count").textContent = String(data.categories.length);
+  $("client-count").textContent = String(data.clients.length);
+}
+
+async function addTaxon(kind, input) {
+  const name = input.value.trim();
+  if (!name) return;
+  try {
+    await api(`/api/${TAXON_PATH[kind]}`, { name });
+    input.value = "";
+    await renderSetup();
+    await refresh();
+  } catch (error) {
+    note(error.message);
+  }
+}
+
 /* -- the off switch ----------------------------------------------------- */
 
 let pauseTicker = null;
@@ -913,6 +1131,7 @@ async function refresh() {
     renderDatalists(labels);
     renderSummary(summary);
     if (state.rulesOpen) await renderRules();
+    if (state.setupOpen && !state.taxonomy) await renderSetup();
   } catch (error) {
     note(`Could not load data: ${error.message}`);
   }
@@ -983,6 +1202,28 @@ $("theme").addEventListener("click", () => {
   if (next) document.documentElement.setAttribute("data-theme", next);
   else document.documentElement.removeAttribute("data-theme");
   try { localStorage.setItem("theme", next); } catch (_) { /* ignore */ }
+});
+
+$("setup-toggle").addEventListener("click", async () => {
+  state.setupOpen = !state.setupOpen;
+  $("setup").hidden = !state.setupOpen;
+  $("setup-toggle").textContent = state.setupOpen ? "Hide" : "Show";
+  $("setup-toggle").setAttribute("aria-expanded", String(state.setupOpen));
+  if (state.setupOpen) await renderSetup();
+});
+
+$("category-add").addEventListener("submit", (event) => {
+  event.preventDefault();
+  addTaxon("category", $("category-new"));
+});
+
+$("client-add").addEventListener("submit", (event) => {
+  event.preventDefault();
+  addTaxon("client", $("client-new"));
+});
+
+document.addEventListener("click", (event) => {
+  if (!event.target.closest(".swatch, .swatch-menu")) closeSwatchMenus();
 });
 
 $("rules-toggle").addEventListener("click", async () => {

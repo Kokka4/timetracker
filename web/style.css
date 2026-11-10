@@ -427,6 +427,174 @@ footer a { color: var(--ink-2); }
   font-size: 11.5px;
 }
 
+/* -- your setup --------------------------------------------------------- */
+
+.setup-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 26px;
+}
+.setup-col h3, .setup-packs-head {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-1);
+}
+.setup-packs-head { margin-top: 26px; }
+.setup-note {
+  margin: 0 0 12px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink-muted);
+  max-width: 62ch;
+}
+
+.taxon-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--ring);
+}
+.taxon-row:last-child { border-bottom: 0; }
+.taxon-row .name {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 13px;
+  padding: 4px 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-1);
+}
+.taxon-row .name:hover { border-color: var(--ring); }
+.taxon-row .name:focus {
+  outline: none;
+  border-color: var(--axis);
+  background: var(--plane);
+}
+.taxon-row .name.archived { color: var(--ink-muted); text-decoration: line-through; }
+/* Sentence case, not uppercase: this says where a category came from, which
+   is a footnote. Shouting it would make "SALES & OUTREACH" the loudest thing
+   in a list whose subject is the names on the left. */
+.taxon-row .tag {
+  font-size: 11px;
+  color: var(--ink-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 13ch;
+}
+.taxon-row .act {
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 7px;
+  border: 1px solid var(--ring);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.taxon-row .act:hover { background: var(--wash); color: var(--ink-1); }
+.taxon-row .act.danger:hover { border-color: var(--critical); color: var(--critical); }
+
+/* The swatch is a real control: click it and the eight palette slots open
+   underneath. Eight named slots rather than a colour picker, because each one
+   is defined twice in this stylesheet and so stays legible in dark mode,
+   which an arbitrary hex would not. */
+.swatch {
+  position: relative;
+  width: 16px; height: 16px;
+  flex: none;
+  padding: 0;
+  border: 1px solid var(--ring);
+  border-radius: 5px;
+  cursor: pointer;
+}
+.swatch-menu {
+  position: absolute;
+  z-index: 50;
+  display: grid;
+  grid-template-columns: repeat(4, 20px);
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--ring);
+  border-radius: var(--radius);
+  background: var(--surface-1);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
+}
+.swatch-menu button {
+  width: 20px; height: 20px;
+  padding: 0;
+  border: 1px solid var(--ring);
+  border-radius: 5px;
+  cursor: pointer;
+}
+.swatch-menu button[aria-pressed="true"] { outline: 2px solid var(--ink-1); outline-offset: 1px; }
+
+.setup-add { display: flex; gap: 7px; margin-top: 12px; }
+.setup-add input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 12.5px;
+  padding: 6px 9px;
+  border: 1px solid var(--ring);
+  border-radius: 7px;
+  background: var(--plane);
+  color: var(--ink-1);
+}
+.setup-add button {
+  font: inherit;
+  font-size: 12.5px;
+  padding: 6px 13px;
+  border: 1px solid var(--ring);
+  border-radius: 7px;
+  background: var(--surface-1);
+  color: var(--ink-1);
+  cursor: pointer;
+}
+.setup-add button:hover { background: var(--wash); }
+
+.pack {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--ring);
+}
+.pack:last-child { border-bottom: 0; }
+.pack-main { flex: 1; min-width: 0; }
+.pack-name { font-size: 13px; color: var(--ink-1); }
+.pack-blurb { font-size: 11.5px; color: var(--ink-muted); margin-top: 2px; }
+.pack-cats { font-size: 11px; color: var(--ink-2); margin-top: 5px; }
+.pack-cats span {
+  display: inline-block;
+  padding: 1px 7px;
+  margin: 2px 4px 0 0;
+  border: 1px solid var(--ring);
+  border-radius: 20px;
+}
+.pack button {
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 12px;
+  border: 1px solid var(--ring);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-1);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.pack button:hover { background: var(--wash); }
+.pack.on button { border-color: transparent; background: var(--wash); color: var(--ink-2); }
+
+@media (max-width: 760px) {
+  .setup-grid { grid-template-columns: 1fr; gap: 22px; }
+}
+
 /* -- the off switch ----------------------------------------------------- */
 
 .pause-wrap { position: relative; display: flex; align-items: center; }
@@ -516,7 +684,10 @@ button.resume[hidden] { display: none; }
   .pause-banner button { margin-left: 0; }
 }
 
-.tiles > *, .grid > *, .review-row > *, .rule-row > * { min-width: 0; }
+/* Grid and flex children default to `min-width: auto`, which means they refuse
+   to shrink below their content and push the page sideways on a phone. */
+.tiles > *, .grid > *, .review-row > *, .rule-row > *,
+.setup-grid > * { min-width: 0; }
 
 @media (max-width: 760px) {
   .review-row { grid-template-columns: 1fr 1fr; }

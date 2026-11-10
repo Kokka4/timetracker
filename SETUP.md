@@ -225,6 +225,23 @@ Show them the Pause button before you leave, and watch them use it once. It is
 the thing that makes the rest of this liveable, and a tracker somebody cannot
 switch off is one they quietly uninstall instead.
 
+### Then spend two minutes in "Your setup"
+
+This is what makes it their tracker rather than yours. On the dashboard, open
+**Your setup** and do three things with them:
+
+1. **Turn on the pack that matches their work.** Sales and outreach, software,
+   design, marketing, finance, legal. It only adds rules, and turning it off
+   later takes back exactly what it added.
+2. **Add their clients.** Two minutes of typing now saves a fortnight of
+   "Unlabelled".
+3. **Rename anything that is not how they talk.** A category rename re-labels
+   their whole history instantly, so there is no cost to getting it right.
+
+Out of the box everyone gets seven neutral categories (Email, Meetings, Comms,
+Docs, AI & research, Admin, Break) matched on things every Mac has. Nobody
+inherits anybody else's job.
+
 If you want the numbers from them, they export and send them. The tool has no
 way to report to you, and that is deliberate — the moment it does, this stops
 being a personal tool and becomes workplace monitoring, which in the EU needs
@@ -339,5 +356,7 @@ Print this bit.
 [ ] Dashboard shows a live timer and a rising "By site"
 [ ] Exclusions added to config.json for anything private
 [ ] Showed them Pause, and watched them pause and resume once
+[ ] Your setup -> turned on the pack that matches their work
+[ ] Your setup -> added their clients
 [ ] Explained what is recorded, and how to stop it
 ```

@@ -82,6 +82,36 @@ client against what that client pays you. Export it with the CSV link.
 
 ---
 
+## Making it yours
+
+Open **Your setup** on the dashboard. Nothing in the taxonomy is fixed.
+
+**Categories** are what kind of work a block is. Add, rename, recolour or
+delete them. Renaming one re-labels your entire history in the same instant,
+because classification is worked out when you look at it rather than stored on
+the event, so a category you named badly in week one is a typing correction
+rather than a migration.
+
+**Clients** are whose work it is. Add them up front, or create one as you go
+by labelling a block. Archive the ones you have finished with and they leave
+the picker without taking their history with them.
+
+**Starter packs** are optional bundles of rules for a kind of work: sales and
+outreach, software, design, marketing, finance, legal. Turning one on only
+adds. Turning it off takes back exactly the rules it added, and leaves behind
+any of its categories you have since started using yourself.
+
+What everybody gets without choosing anything is seven neutral categories
+(Email, Meetings, Comms, Docs, AI & research, Admin, Break) matched only on
+things that are on more or less every Mac. No version of this tool should
+arrive on your machine already describing somebody else's job.
+
+> Colours are eight palette slots rather than free hex, because each slot is
+> defined once for light and once for dark. A hex that looked right in one
+> would be unreadable in the other.
+
+---
+
 ## What the numbers mean
 
 Worth knowing, because most trackers quietly get these wrong:
@@ -307,7 +337,9 @@ tracker/
   macos.py           the probes, with three fallback layers
   ingest.py          browser heartbeats to intervals
   analytics.py       the desktop × browser join, and the rollups
-  rules.py           classification
+  rules.py           classification: how a block is matched
+  taxonomy.py        the catalogue: starter categories, packs, the upgrade
+  pause.py           the off switch
   server.py          loopback HTTP: dashboard, API, ingest
   db.py              SQLite schema and writes
 web/                 the dashboard (one page, no dependencies)

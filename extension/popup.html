@@ -4,75 +4,195 @@
 <meta charset="utf-8">
 <title>Local Time Tracker</title>
 <style>
+  /* Dark on purpose rather than by preference: this popup is a readout on a
+     background process, and it sits over whatever page you were on. A fixed
+     dark surface reads as instrumentation instead of as part of the page. */
   :root {
-    color-scheme: light dark;
-    --surface: #fcfcfb;
-    --ink-1: #0b0b0b;
-    --ink-2: #52514e;
-    --muted: #898781;
-    --ring: rgba(11, 11, 11, 0.12);
-    --good: #0ca30c;
-    --critical: #d03b3b;
-    --accent: #2a78d6;
+    color-scheme: dark;
+    --bg:        #0a0c10;
+    --bg-lift:   #10141a;
+    --panel:     #141920;
+    --line:      #222a34;
+    --line-soft: #1a212a;
+    --ink:       #e9eef5;
+    --ink-2:     #97a3b4;
+    --muted:     #5e6b7c;
+    --accent:    #4da3ff;
+    --live:      #2ee6a8;
+    --bad:       #ff5f5f;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
   }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --surface: #1a1a19;
-      --ink-1: #f0efec;
-      --ink-2: #c3c2b7;
-      --ring: rgba(255, 255, 255, 0.14);
-      --accent: #3987e5;
-    }
-  }
+
+  * { box-sizing: border-box; }
+
   body {
-    width: 290px;
+    width: 304px;
     margin: 0;
-    padding: 14px;
-    background: var(--surface);
-    color: var(--ink-1);
+    padding: 0;
+    background: var(--bg);
+    color: var(--ink);
     font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
   }
-  h1 { margin: 0 0 10px; font-size: 13px; display: flex; align-items: center; gap: 7px; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
-  .dot.ok { background: var(--good); }
-  .dot.bad { background: var(--critical); }
-  .today { font-size: 26px; font-weight: 600; letter-spacing: -0.01em; }
-  .sub { color: var(--ink-2); font-size: 12px; margin-bottom: 12px; }
-  label { display: block; font-size: 11px; text-transform: uppercase;
-          letter-spacing: 0.05em; color: var(--muted); margin: 12px 0 4px; }
+
+  /* A hairline of light along the top edge, so the panel reads as a surface
+     with a light source rather than a flat rectangle. */
+  .sheet {
+    position: relative;
+    padding: 14px 15px 15px;
+    background:
+      radial-gradient(120% 70% at 50% -20%, rgba(77, 163, 255, 0.10), transparent 70%),
+      var(--bg);
+  }
+  .sheet::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.16), transparent);
+  }
+
+  h1 {
+    margin: 0 0 14px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--muted);
+    flex: none;
+  }
+  .dot.ok  { background: var(--live); box-shadow: 0 0 0 3px rgba(46,230,168,0.15); }
+  .dot.bad { background: var(--bad);  box-shadow: 0 0 0 3px rgba(255,95,95,0.14); }
+
+  .today {
+    font-family: var(--mono);
+    font-size: 30px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.05;
+    color: var(--ink);
+  }
+  .sub {
+    margin-top: 5px;
+    color: var(--ink-2);
+    font-size: 11.5px;
+    min-height: 16px;
+  }
+  .sub .err { color: var(--bad); }
+
+  label, .field-label {
+    display: block;
+    font-size: 9.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+    margin: 16px 0 6px;
+  }
+  /* An explicit display beats the browser's [hidden] rule, so anything given
+     one here has to opt back in or the attribute silently does nothing. */
+  label[hidden], .field-label[hidden], .pause-row[hidden], .row[hidden] { display: none; }
+
   input[type=text] {
-    width: 100%; box-sizing: border-box; font: inherit; font-size: 12px;
-    padding: 5px 7px; border: 1px solid var(--ring); border-radius: 6px;
-    background: transparent; color: var(--ink-1);
+    width: 100%;
+    font: inherit;
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 7px 9px;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    background: var(--bg-lift);
+    color: var(--ink-2);
   }
-  .row { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+  input[type=text]:focus {
+    outline: none;
+    border-color: var(--accent);
+    color: var(--ink);
+  }
+
+  .row { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
+
   button {
-    font: inherit; font-size: 12px; padding: 6px 11px; border-radius: 7px;
-    border: 1px solid var(--ring); background: transparent; color: var(--ink-1);
+    font: inherit;
+    font-size: 12px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: var(--panel);
+    color: var(--ink);
     cursor: pointer;
+    transition: background 90ms ease, border-color 90ms ease;
   }
-  button:disabled { opacity: 0.45; cursor: default; }
-  button.primary { background: var(--accent); border-color: transparent; color: #fff; font-weight: 600; }
-  button.resume { background: var(--good); border-color: transparent; color: #fff; font-weight: 600; }
-  .pause-row { display: flex; gap: 6px; margin-top: 6px; }
-  .pause-row button { flex: 1; padding: 6px 0; text-align: center; }
-  /* An explicit `display` beats the browser's own [hidden] rule, so any
-     element given one here has to opt back in or the hidden attribute
-     silently does nothing. */
-  .pause-row[hidden], label[hidden] { display: none; }
-  .note { margin-top: 12px; color: var(--muted); font-size: 11.5px; }
-  .err { color: var(--critical); }
+  button:hover:not(:disabled) { background: #1a212b; border-color: #2e3844; }
+  button:active:not(:disabled) { background: #0f141b; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  button.primary {
+    flex: 1;
+    background: var(--accent);
+    border-color: transparent;
+    color: #04111f;
+    font-weight: 650;
+  }
+  button.primary:hover:not(:disabled) { background: #65b0ff; border-color: transparent; }
+
+  button.resume {
+    flex: 1;
+    background: var(--live);
+    border-color: transparent;
+    color: #04231a;
+    font-weight: 650;
+  }
+  button.resume:hover:not(:disabled) { background: #4ff0b8; border-color: transparent; }
+  button.resume[hidden] { display: none; }
+
+  .pause-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .pause-row button { padding: 8px 0; text-align: center; font-size: 11.5px; }
+  .pause-row button:last-child {
+    grid-column: 1 / -1;
+    color: var(--ink-2);
+  }
+
   .banner {
-    display: none; margin: 0 0 12px; padding: 9px 10px; border-radius: 8px;
-    background: rgba(208, 59, 59, 0.12); border: 1px solid rgba(208, 59, 59, 0.4);
-    font-size: 12px; line-height: 1.4;
+    display: none;
+    margin-bottom: 13px;
+    padding: 10px 11px;
+    border: 1px solid rgba(255, 95, 95, 0.38);
+    border-left: 3px solid var(--bad);
+    border-radius: 8px;
+    background: rgba(255, 95, 95, 0.09);
+    font-size: 11.5px;
+    line-height: 1.45;
+    color: var(--ink-2);
   }
   .banner.on { display: block; }
-  .banner b { color: var(--critical); }
-  .off .today { opacity: 0.35; }
+  .banner b { color: var(--bad); }
+
+  .note {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--line-soft);
+    color: var(--muted);
+    font-size: 10.5px;
+    line-height: 1.5;
+  }
+
+  .off .today { color: var(--muted); }
 </style>
 </head>
 <body>
+<div class="sheet">
   <h1><span class="dot" id="dot"></span> Local Time Tracker</h1>
 
   <div class="banner" id="banner">
@@ -87,19 +207,20 @@
     <button class="resume" id="resume" hidden>Resume tracking</button>
   </div>
 
-  <label id="pause-label">Stop recording for</label>
+  <span class="field-label" id="pause-label">Stop recording for</span>
   <div class="pause-row" id="pause-row">
     <button data-minutes="30">30 min</button>
     <button data-minutes="60">1 h</button>
     <button data-minutes="120">2 h</button>
-    <button data-minutes="">Until I resume</button>
+    <button data-minutes="">Until I turn it back on</button>
   </div>
 
   <label for="endpoint">Tracker endpoint</label>
   <input type="text" id="endpoint" spellcheck="false" autocomplete="off">
 
-  <div class="note" id="note">Tab titles and URLs are posted to that address
-    and nowhere else. Incognito windows are never reported.</div>
+  <div class="note" id="note">Tab titles and URLs go to that address and nowhere
+    else. Incognito windows are never reported.</div>
+</div>
 </body>
 <script src="popup.js"></script>
 </html>

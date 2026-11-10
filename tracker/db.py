@@ -78,6 +78,35 @@ CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT
 );
+
+-- Categories and clients exist in their own right, not as a side effect of
+-- the rules that happen to mention them. That is what lets you create one
+-- before anything uses it, rename one without editing every rule, and give
+-- one a colour that survives having no time against it today.
+--
+-- Rules still store the *name*, so classification stays a pure read-time
+-- function of the rules table and a rename is a single UPDATE away from
+-- re-labelling the whole history.
+CREATE TABLE IF NOT EXISTS categories (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL,
+    color      TEXT,
+    sort_order INTEGER NOT NULL DEFAULT 100,
+    source     TEXT NOT NULL DEFAULT 'user',
+    created_ts REAL NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_name
+    ON categories(name COLLATE NOCASE);
+
+CREATE TABLE IF NOT EXISTS clients (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL,
+    color      TEXT,
+    archived   INTEGER NOT NULL DEFAULT 0,
+    created_ts REAL NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_name
+    ON clients(name COLLATE NOCASE);
 """
 
 
@@ -93,6 +122,40 @@ class Store:
         self._write_lock = threading.RLock()
         with self._write_lock:
             self.conn().executescript(SCHEMA)
+            self._add_missing_columns()
+
+    def _add_missing_columns(self) -> None:
+        """Columns added after the first release.
+
+        `CREATE TABLE IF NOT EXISTS` does nothing to a table that already
+        exists, so a column added later has to be bolted on separately or an
+        upgraded install quietly runs the old shape.
+        """
+        conn = self.conn()
+        have = {row["name"] for row in conn.execute("PRAGMA table_info(rules)")}
+        if "source" not in have:
+            # Where a rule came from: 'user' for anything you wrote,
+            # 'starter' for the defaults, 'pack:<id>' for a pack. Removing a
+            # pack takes back exactly its own rows and nothing else.
+            conn.execute(
+                "ALTER TABLE rules ADD COLUMN source TEXT NOT NULL DEFAULT 'user'"
+            )
+
+    def backup_to(self, target: Path) -> Path:
+        """A real snapshot, taken through SQLite rather than by copying bytes.
+
+        In WAL mode the newest writes live in the -wal file, so `cp` of the
+        database alone silently loses them.
+        """
+        target = Path(target)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with self._write_lock:
+            destination = sqlite3.connect(str(target))
+            try:
+                self.conn().backup(destination)
+            finally:
+                destination.close()
+        return target
 
     # -- connection ------------------------------------------------------
 
@@ -299,8 +362,8 @@ class Store:
         cur = self._write(
             "INSERT INTO rules"
             " (priority, match_app, match_title, match_domain, match_url,"
-            "  client, project, category, enabled, created_ts)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "  client, project, category, enabled, created_ts, source)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 int(rule.get("priority") or 100),
                 rule.get("match_app") or None,
@@ -312,9 +375,20 @@ class Store:
                 rule.get("category") or None,
                 1 if rule.get("enabled", True) else 0,
                 time.time(),
+                str(rule.get("source") or "user"),
             ),
         )
         return int(cur.lastrowid)
+
+    def delete_rules_by_source(self, source: str) -> int:
+        cur = self._write("DELETE FROM rules WHERE source = ?", (source,))
+        return cur.rowcount or 0
+
+    def rule_sources(self) -> dict[str, int]:
+        rows = self.conn().execute(
+            "SELECT source, COUNT(*) AS n FROM rules GROUP BY source"
+        ).fetchall()
+        return {r["source"]: int(r["n"]) for r in rows}
 
     def delete_rule(self, rule_id: int) -> None:
         self._write("DELETE FROM rules WHERE id = ?", (rule_id,))
@@ -337,6 +411,226 @@ class Store:
             self.add_rule(rule)
             count += 1
         return count
+
+    # -- categories and clients ------------------------------------------
+    # Rules store names rather than ids, so a rename has to carry the rules
+    # with it. Both halves happen under the one write lock: a rename that
+    # updated the registry but not the rules would leave the history pointing
+    # at a category that no longer exists, which is worse than not renaming.
+
+    def categories(self) -> list[dict[str, Any]]:
+        rows = self.conn().execute(
+            "SELECT * FROM categories ORDER BY sort_order ASC, name COLLATE NOCASE ASC"
+        ).fetchall()
+        return [_row_to_dict(r) for r in rows]
+
+    def category_named(self, name: str) -> dict[str, Any] | None:
+        row = self.conn().execute(
+            "SELECT * FROM categories WHERE name = ? COLLATE NOCASE", (name,)
+        ).fetchone()
+        return _row_to_dict(row) if row else None
+
+    def add_category(
+        self,
+        name: str,
+        color: str | None = None,
+        sort_order: int = 100,
+        source: str = "user",
+    ) -> int:
+        """Create a category, or return the existing one of that name."""
+        name = str(name).strip()
+        if not name:
+            raise ValueError("a category needs a name")
+        with self._write_lock:
+            existing = self.category_named(name)
+            if existing:
+                return int(existing["id"])
+            cur = self._write(
+                "INSERT INTO categories (name, color, sort_order, source, created_ts)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (name, color, int(sort_order), source, time.time()),
+            )
+            return int(cur.lastrowid)
+
+    def update_category(
+        self,
+        category_id: int,
+        name: str | None = None,
+        color: str | None = None,
+        sort_order: int | None = None,
+    ) -> dict[str, Any] | None:
+        with self._write_lock:
+            row = self.conn().execute(
+                "SELECT * FROM categories WHERE id = ?", (category_id,)
+            ).fetchone()
+            if not row:
+                return None
+            old_name = row["name"]
+
+            if name is not None:
+                name = str(name).strip()
+                if not name:
+                    raise ValueError("a category needs a name")
+                clash = self.category_named(name)
+                if clash and int(clash["id"]) != int(category_id):
+                    raise ValueError(f"there is already a category called {name!r}")
+                self._write(
+                    "UPDATE categories SET name = ? WHERE id = ?", (name, category_id)
+                )
+                if name != old_name:
+                    # Classification is computed from the rules at read time,
+                    # so this one statement re-labels the whole history.
+                    self._write(
+                        "UPDATE rules SET category = ? WHERE category = ? COLLATE NOCASE",
+                        (name, old_name),
+                    )
+            if color is not None:
+                self._write(
+                    "UPDATE categories SET color = ? WHERE id = ?", (color, category_id)
+                )
+            if sort_order is not None:
+                self._write(
+                    "UPDATE categories SET sort_order = ? WHERE id = ?",
+                    (int(sort_order), category_id),
+                )
+            return _row_to_dict(
+                self.conn().execute(
+                    "SELECT * FROM categories WHERE id = ?", (category_id,)
+                ).fetchone()
+            )
+
+    def delete_category(self, category_id: int) -> dict[str, Any]:
+        """Remove a category and release the rules that assigned it.
+
+        A rule that existed only to set this category has nothing left to say
+        and goes too; a rule that also sets a client keeps the client.
+        """
+        with self._write_lock:
+            row = self.conn().execute(
+                "SELECT * FROM categories WHERE id = ?", (category_id,)
+            ).fetchone()
+            if not row:
+                return {"deleted": False}
+            name = row["name"]
+            self._write(
+                "UPDATE rules SET category = NULL WHERE category = ? COLLATE NOCASE",
+                (name,),
+            )
+            emptied = self._write(
+                "DELETE FROM rules WHERE client IS NULL AND project IS NULL"
+                " AND category IS NULL"
+            )
+            self._write("DELETE FROM categories WHERE id = ?", (category_id,))
+            return {
+                "deleted": True,
+                "name": name,
+                "rules_removed": emptied.rowcount or 0,
+            }
+
+    def clients(self, include_archived: bool = True) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM clients"
+        if not include_archived:
+            sql += " WHERE archived = 0"
+        sql += " ORDER BY name COLLATE NOCASE ASC"
+        return [_row_to_dict(r) for r in self.conn().execute(sql).fetchall()]
+
+    def client_named(self, name: str) -> dict[str, Any] | None:
+        row = self.conn().execute(
+            "SELECT * FROM clients WHERE name = ? COLLATE NOCASE", (name,)
+        ).fetchone()
+        return _row_to_dict(row) if row else None
+
+    def add_client(self, name: str, color: str | None = None) -> int:
+        name = str(name).strip()
+        if not name:
+            raise ValueError("a client needs a name")
+        with self._write_lock:
+            existing = self.client_named(name)
+            if existing:
+                return int(existing["id"])
+            cur = self._write(
+                "INSERT INTO clients (name, color, archived, created_ts)"
+                " VALUES (?, ?, 0, ?)",
+                (name, color, time.time()),
+            )
+            return int(cur.lastrowid)
+
+    def update_client(
+        self,
+        client_id: int,
+        name: str | None = None,
+        color: str | None = None,
+        archived: bool | None = None,
+    ) -> dict[str, Any] | None:
+        with self._write_lock:
+            row = self.conn().execute(
+                "SELECT * FROM clients WHERE id = ?", (client_id,)
+            ).fetchone()
+            if not row:
+                return None
+            old_name = row["name"]
+
+            if name is not None:
+                name = str(name).strip()
+                if not name:
+                    raise ValueError("a client needs a name")
+                clash = self.client_named(name)
+                if clash and int(clash["id"]) != int(client_id):
+                    # Renaming onto an existing name is a merge, and merging
+                    # is the one thing here that cannot be undone by renaming
+                    # back, so it is refused rather than guessed at.
+                    raise ValueError(f"there is already a client called {name!r}")
+                self._write(
+                    "UPDATE clients SET name = ? WHERE id = ?", (name, client_id)
+                )
+                if name != old_name:
+                    self._write(
+                        "UPDATE rules SET client = ? WHERE client = ? COLLATE NOCASE",
+                        (name, old_name),
+                    )
+            if color is not None:
+                self._write(
+                    "UPDATE clients SET color = ? WHERE id = ?", (color, client_id)
+                )
+            if archived is not None:
+                self._write(
+                    "UPDATE clients SET archived = ? WHERE id = ?",
+                    (1 if archived else 0, client_id),
+                )
+            return _row_to_dict(
+                self.conn().execute(
+                    "SELECT * FROM clients WHERE id = ?", (client_id,)
+                ).fetchone()
+            )
+
+    def delete_client(self, client_id: int) -> dict[str, Any]:
+        with self._write_lock:
+            row = self.conn().execute(
+                "SELECT * FROM clients WHERE id = ?", (client_id,)
+            ).fetchone()
+            if not row:
+                return {"deleted": False}
+            name = row["name"]
+            self._write(
+                "UPDATE rules SET client = NULL WHERE client = ? COLLATE NOCASE",
+                (name,),
+            )
+            emptied = self._write(
+                "DELETE FROM rules WHERE client IS NULL AND project IS NULL"
+                " AND category IS NULL"
+            )
+            self._write("DELETE FROM clients WHERE id = ?", (client_id,))
+            return {
+                "deleted": True,
+                "name": name,
+                "rules_removed": emptied.rowcount or 0,
+            }
+
+    def categories_in_use(self) -> set[str]:
+        rows = self.conn().execute(
+            "SELECT DISTINCT category FROM rules WHERE category IS NOT NULL"
+        ).fetchall()
+        return {str(r["category"]).casefold() for r in rows}
 
     # -- meta / stats ----------------------------------------------------
 

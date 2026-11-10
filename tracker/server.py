@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
-from . import analytics, pause as pause_mod, rules as rules_mod
+from . import analytics, pause as pause_mod, rules as rules_mod, taxonomy
 
 MAX_BODY = 256 * 1024
 EXTENSION_ORIGINS = (
@@ -36,6 +36,9 @@ CONTENT_TYPES = {
 }
 RULE_ID_PATH = re.compile(r"^/api/rules/(\d+)$")
 RULE_TOGGLE_PATH = re.compile(r"^/api/rules/(\d+)/toggle$")
+CATEGORY_ID_PATH = re.compile(r"^/api/categories/(\d+)$")
+CLIENT_ID_PATH = re.compile(r"^/api/clients/(\d+)$")
+PACK_PATH = re.compile(r"^/api/packs/([a-z0-9_-]+)$")
 
 
 class Context:
@@ -230,6 +233,8 @@ def make_handler(ctx: Context):
                     return self._json(_summary(ctx, params))
                 if path == "/api/rules":
                     return self._json({"ok": True, "rules": ctx.store.rules(False)})
+                if path == "/api/taxonomy":
+                    return self._json(self._taxonomy())
                 if path == "/api/labels":
                     return self._json(self._labels())
                 if path == "/api/export.csv":
@@ -266,22 +271,49 @@ def make_handler(ctx: Context):
                 },
             }
 
-        def _labels(self) -> dict[str, Any]:
-            clients: set[str] = set()
-            categories: set[str] = set()
-            projects: set[str] = set()
-            for rule in ctx.store.rules(False):
-                if rule.get("client"):
-                    clients.add(rule["client"])
-                if rule.get("category"):
-                    categories.add(rule["category"])
-                if rule.get("project"):
-                    projects.add(rule["project"])
+        def _taxonomy(self) -> dict[str, Any]:
             return {
                 "ok": True,
-                "clients": sorted(clients),
-                "categories": sorted(categories),
+                "categories": ctx.store.categories(),
+                "clients": ctx.store.clients(),
+                "packs": taxonomy.pack_list(ctx.store),
+                "palette": list(taxonomy.SLOTS),
+                "in_use": sorted(ctx.store.categories_in_use()),
+            }
+
+        def _labels(self) -> dict[str, Any]:
+            """The pickable names.
+
+            Sourced from the registries rather than from whatever the rules
+            happen to mention, which is what lets you create a category and
+            then use it, instead of only the other way round. Names found only
+            in rules are still included, so a database mid-upgrade never
+            offers less than it did before.
+            """
+            categories = [c["name"] for c in ctx.store.categories()]
+            clients = [c["name"] for c in ctx.store.clients() if not c["archived"]]
+            seen_categories = {name.casefold() for name in categories}
+            seen_clients = {name.casefold() for name in clients}
+            projects: set[str] = set()
+
+            for rule in ctx.store.rules(False):
+                if rule.get("category") and rule["category"].casefold() not in seen_categories:
+                    categories.append(rule["category"])
+                    seen_categories.add(rule["category"].casefold())
+                if rule.get("client") and rule["client"].casefold() not in seen_clients:
+                    clients.append(rule["client"])
+                    seen_clients.add(rule["client"].casefold())
+                if rule.get("project"):
+                    projects.add(rule["project"])
+
+            return {
+                "ok": True,
+                "clients": sorted(clients, key=str.casefold),
+                "categories": categories,
                 "projects": sorted(projects),
+                "colors": {
+                    c["name"]: c["color"] for c in ctx.store.categories() if c["color"]
+                },
             }
 
         def _export(self, params: dict[str, list[str]]) -> None:
@@ -325,9 +357,22 @@ def make_handler(ctx: Context):
                     return self._create_rule()
                 if path == "/api/label":
                     return self._label_block()
+                if path == "/api/categories":
+                    return self._create_named("category")
+                if path == "/api/clients":
+                    return self._create_named("client")
                 match = RULE_TOGGLE_PATH.match(path)
                 if match:
                     return self._toggle_rule(int(match.group(1)))
+                match = CATEGORY_ID_PATH.match(path)
+                if match:
+                    return self._update_named("category", int(match.group(1)))
+                match = CLIENT_ID_PATH.match(path)
+                if match:
+                    return self._update_named("client", int(match.group(1)))
+                match = PACK_PATH.match(path)
+                if match:
+                    return self._pack(match.group(1))
                 return self._error(404, f"unknown endpoint: {path}")
             except BrokenPipeError:
                 return
@@ -417,12 +462,107 @@ def make_handler(ctx: Context):
             if not (rule["client"] or rule["project"] or rule["category"]):
                 return self._error(400, "nothing to label it with")
             rule_id = ctx.store.add_rule(rule)
-            self._json({"ok": True, "id": rule_id, "rule": rule})
+
+            # A name typed into the review panel becomes a managed record
+            # right here. Without this, a category would exist only inside
+            # the rule that mentions it and could not be recoloured, renamed
+            # or reused, which is the whole thing this release is about.
+            created: dict[str, str] = {}
+            if rule.get("category") and not ctx.store.category_named(rule["category"]):
+                ctx.store.add_category(
+                    rule["category"], color=taxonomy.slot_for(rule["category"])
+                )
+                created["category"] = rule["category"]
+            if rule.get("client") and not ctx.store.client_named(rule["client"]):
+                ctx.store.add_client(rule["client"])
+                created["client"] = rule["client"]
+
+            self._json({"ok": True, "id": rule_id, "rule": rule, "created": created})
 
         def _toggle_rule(self, rule_id: int) -> None:
             payload = self._body()
             ctx.store.set_rule_enabled(rule_id, bool(payload.get("enabled", True)))
             self._json({"ok": True, "id": rule_id})
+
+        # -- the taxonomy ------------------------------------------------
+        # Categories and clients differ only in which columns they carry, so
+        # they share these three handlers rather than six near-identical ones.
+
+        def _create_named(self, kind: str) -> None:
+            payload = self._body()
+            name = str(payload.get("name") or "").strip()
+            if not name:
+                return self._error(400, f"a {kind} needs a name")
+            if len(name) > 60:
+                return self._error(400, "that name is too long (60 characters)")
+            color = payload.get("color") or None
+            if color and color not in taxonomy.SLOTS:
+                return self._error(
+                    400, f"colour must be one of {', '.join(taxonomy.SLOTS)}"
+                )
+            try:
+                if kind == "category":
+                    new_id = ctx.store.add_category(
+                        name,
+                        color=color or taxonomy.slot_for(name),
+                        sort_order=int(payload.get("sort_order") or 500),
+                    )
+                else:
+                    new_id = ctx.store.add_client(name, color=color)
+            except ValueError as exc:
+                return self._error(400, str(exc))
+            self._json({"ok": True, "id": new_id, "name": name})
+
+        def _update_named(self, kind: str, record_id: int) -> None:
+            payload = self._body()
+            if payload.get("delete"):
+                result = (
+                    ctx.store.delete_category(record_id)
+                    if kind == "category"
+                    else ctx.store.delete_client(record_id)
+                )
+                if not result.get("deleted"):
+                    return self._error(404, f"no such {kind}: {record_id}")
+                return self._json({"ok": True, **result})
+
+            color = payload.get("color")
+            if color and color not in taxonomy.SLOTS:
+                return self._error(
+                    400, f"colour must be one of {', '.join(taxonomy.SLOTS)}"
+                )
+            try:
+                if kind == "category":
+                    row = ctx.store.update_category(
+                        record_id,
+                        name=payload.get("name"),
+                        color=color,
+                        sort_order=payload.get("sort_order"),
+                    )
+                else:
+                    row = ctx.store.update_client(
+                        record_id,
+                        name=payload.get("name"),
+                        color=color,
+                        archived=payload.get("archived"),
+                    )
+            except ValueError as exc:
+                return self._error(409, str(exc))
+            if row is None:
+                return self._error(404, f"no such {kind}: {record_id}")
+            self._json({"ok": True, kind: row})
+
+        def _pack(self, pack_id: str) -> None:
+            payload = self._body()
+            wants = payload.get("apply")
+            try:
+                result = (
+                    taxonomy.remove_pack(ctx.store, pack_id)
+                    if wants is False
+                    else taxonomy.apply_pack(ctx.store, pack_id)
+                )
+            except ValueError as exc:
+                return self._error(404, str(exc))
+            self._json({"ok": True, **result, "packs": taxonomy.pack_list(ctx.store)})
 
         # -- DELETE ------------------------------------------------------
 

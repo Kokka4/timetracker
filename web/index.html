@@ -103,6 +103,51 @@
 
   <section class="card">
     <div class="card-head">
+      <h2>Your setup</h2>
+      <span class="muted">Categories, clients and the starter packs. Everything
+        here is yours to rename, recolour or delete.</span>
+      <span class="spacer"></span>
+      <button class="ghost" id="setup-toggle" aria-expanded="false">Show</button>
+    </div>
+    <div id="setup" hidden>
+      <div class="setup-grid">
+        <div class="setup-col">
+          <h3>Categories <span class="muted" id="category-count"></span></h3>
+          <p class="setup-note">What kind of work a block is. Renaming one
+            re-labels your whole history, because classification is worked out
+            when you look at it rather than stored on the event.</p>
+          <div id="category-list"></div>
+          <form class="setup-add" id="category-add">
+            <input type="text" id="category-new" placeholder="New category"
+                   maxlength="60" autocomplete="off">
+            <button type="submit">Add</button>
+          </form>
+        </div>
+
+        <div class="setup-col">
+          <h3>Clients <span class="muted" id="client-count"></span></h3>
+          <p class="setup-note">Whose work it is. Add them here, or create one
+            as you go from the review panel above. Archive the ones you have
+            finished with to keep the picker short.</p>
+          <div id="client-list"></div>
+          <form class="setup-add" id="client-add">
+            <input type="text" id="client-new" placeholder="New client"
+                   maxlength="60" autocomplete="off">
+            <button type="submit">Add</button>
+          </form>
+        </div>
+      </div>
+
+      <h3 class="setup-packs-head">Starter packs</h3>
+      <p class="setup-note">Optional bundles of rules for a kind of work.
+        Turning one on only adds; turning it off takes back exactly what it
+        added, and never a category you have started using yourself.</p>
+      <div id="pack-list"></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
       <h2>Rules <span class="muted" id="rule-count"></span></h2>
       <span class="spacer"></span>
       <button class="ghost" id="rules-toggle" aria-expanded="false">Show</button>
