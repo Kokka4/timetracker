@@ -47,6 +47,12 @@ SLUG="$(printf '%s' "$REPO_URL" | sed -E 's#^.*github\.com[:/]##; s#\.git$##')"
 BRANCH="${TRACKER_BRANCH:-main}"
 TARBALL="https://codeload.github.com/$SLUG/tar.gz/refs/heads/$BRANCH"
 
+# Remember whether a database was here BEFORE the fetch. Anything found
+# afterwards that was not here before arrived with the download; anything that
+# was already here is this machine's own history and must never be touched.
+HAD_DB=0
+[ -f "$DEST/data/tracker.db" ] && HAD_DB=1
+
 step "Fetching the code"
 if [ -d "$DEST/.git" ] && command -v git >/dev/null 2>&1; then
   git -C "$DEST" pull --ff-only --quiet && ok "updated the existing clone at $DEST"
@@ -67,11 +73,21 @@ else
   ok "downloaded into $DEST (no git needed)"
 fi
 
-# A release should never carry anyone else's recorded activity.
-if [ -f "$DEST/data/tracker.db" ]; then
-  printf "  \033[33m!\033[0m data/tracker.db came with the download — that is somebody\n"
-  printf "      else's history. Removing it so you start from zero.\n"
-  rm -f "$DEST/data/tracker.db" "$DEST/data/tracker.db-wal" "$DEST/data/tracker.db-shm"
+# A release should never carry anyone else's recorded activity — but this
+# only ever applies to a database that ARRIVED with the download. An earlier
+# version of this check ran unconditionally and destroyed the local history of
+# every machine that re-ran the installer to update. Two guards now: it must
+# be new, and it is renamed rather than deleted, so a mistake here is always
+# recoverable.
+if [ "$HAD_DB" = "0" ] && [ -f "$DEST/data/tracker.db" ]; then
+  KEEP="$DEST/data/inherited-$(date +%Y%m%d-%H%M%S).db"
+  printf "  \033[33m!\033[0m a database arrived with the download — that is somebody\n"
+  printf "      else's history, so this install starts from zero.\n"
+  mv "$DEST/data/tracker.db" "$KEEP" 2>/dev/null \
+    && printf "      moved aside to %s\n" "$KEEP"
+  rm -f "$DEST/data/tracker.db-wal" "$DEST/data/tracker.db-shm"
+elif [ "$HAD_DB" = "1" ]; then
+  ok "existing history kept ($(du -h "$DEST/data/tracker.db" 2>/dev/null | cut -f1))"
 fi
 
 # -- 3. install -------------------------------------------------------------

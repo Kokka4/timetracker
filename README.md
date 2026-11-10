@@ -165,9 +165,11 @@ Offline instead of a repo:
 ```
 
 The release is built from an allow-list, not an ignore-list, and refuses to
-build if a database or log file would end up inside it. `bootstrap.sh` deletes
-any `tracker.db` that arrives with a download, so nobody inherits anyone
-else's history.
+build if a database or log file would end up inside it. If a `tracker.db`
+nevertheless arrives with a download, `bootstrap.sh` renames it to
+`data/inherited-<timestamp>.db` so that install starts from zero without
+anybody inheriting anyone else's history. It never deletes a database, and
+never touches one that was already on the machine before the fetch.
 
 Updating a machine later:
 

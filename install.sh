@@ -107,6 +107,32 @@ mkdir -p "$DIR/data" "$DIR/logs" "$HOME/Library/LaunchAgents"
 chmod 700 "$DIR/data"
 chmod +x "$DIR/agent.sh" 2>/dev/null || true
 
+# Snapshot the history before touching anything. Installing should never be
+# able to cost you data, and once it has, "be more careful" is not a fix.
+if [ -f "$DIR/data/tracker.db" ]; then
+  mkdir -p "$DIR/data/backups"
+  STAMP="$(date +%Y%m%d-%H%M%S)"
+  if "$PYTHON_REAL" - "$DIR/data/tracker.db" "$DIR/data/backups/tracker-$STAMP.db" <<'PYBACKUP' 2>/dev/null
+import sqlite3, sys
+# The online backup API, not a file copy: in WAL mode the newest writes live
+# in the -wal file and a plain cp silently loses them.
+source = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
+target = sqlite3.connect(sys.argv[2])
+source.backup(target)
+target.close()
+source.close()
+PYBACKUP
+  then
+    ok "history backed up to data/backups/tracker-$STAMP.db ($(du -h "$DIR/data/backups/tracker-$STAMP.db" | cut -f1))"
+    # Keep the five most recent, discard the rest.
+    ls -1t "$DIR/data/backups"/tracker-*.db 2>/dev/null | tail -n +6 | while IFS= read -r old; do
+      rm -f "$old"
+    done
+  else
+    warn "could not back up the existing database — continuing without a snapshot"
+  fi
+fi
+
 # macOS protects Desktop, Documents and Downloads. Your Terminal can read them
 # because you approved it once; a launchd agent cannot, and is denied with no
 # prompt at all. Say so before it turns into a confusing crash loop.

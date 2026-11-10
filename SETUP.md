@@ -263,13 +263,40 @@ launchctl kickstart -k gui/$(id -u)/ai.leadprinter.timetracker   # restart
 
 ## 8. Updating later
 
-They run one command; data and rules survive untouched:
+One command. Data and rules survive untouched:
 
 ```bash
 cd ~/timetracker && ./update.sh
 ```
 
+Re-running the full installer is equally safe and does the same job:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kokka4/timetracker/main/bootstrap.sh | bash
+```
+
 Worth putting in the group chat whenever you ship a change.
+
+### Their history is backed up on every install
+
+Each run of `install.sh` snapshots the database to
+`data/backups/tracker-YYYYMMDD-HHMMSS.db` before touching anything, keeping
+the five most recent. It uses SQLite's online backup API rather than copying
+the file, so writes still sitting in the write-ahead log are included.
+
+To restore one:
+
+```bash
+cd ~/timetracker
+launchctl bootout gui/$(id -u)/ai.leadprinter.timetracker
+cp data/backups/tracker-20261110-120000.db data/tracker.db
+rm -f data/tracker.db-wal data/tracker.db-shm
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.leadprinter.timetracker.plist
+```
+
+If a database arrives inside a download — someone else's, from a zip — the
+installer moves it to `data/inherited-<timestamp>.db` rather than deleting it,
+so that install starts from zero without anything being destroyed.
 
 ---
 
