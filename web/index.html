@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Time</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header class="bar">
+  <div class="brand">
+    <span class="dot" id="live-dot" title="tracker status"></span>
+    <h1>Time</h1>
+  </div>
+
+  <nav class="ranges" id="ranges" role="tablist" aria-label="Date range">
+    <button role="tab" data-range="today">Today</button>
+    <button role="tab" data-range="yesterday">Yesterday</button>
+    <button role="tab" data-range="week">7 days</button>
+    <button role="tab" data-range="this_month">This month</button>
+    <button role="tab" data-range="month">30 days</button>
+  </nav>
+
+  <div class="bar-right">
+    <span class="muted" id="now-line"></span>
+    <button class="ghost" id="theme" title="Switch light / dark" aria-label="Switch light or dark theme">&#9686;</button>
+  </div>
+</header>
+
+<main>
+  <div id="notices"></div>
+
+  <section class="tiles" id="tiles" aria-label="Headline figures"></section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2 id="chart-title">Where the time went</h2>
+      <div class="legend" id="legend"></div>
+    </div>
+    <div class="chart-host" id="chart"></div>
+  </section>
+
+  <section class="card" id="timeline-card">
+    <div class="card-head">
+      <h2>Through the day</h2>
+      <span class="muted" id="timeline-note"></span>
+    </div>
+    <div class="chart-host" id="timeline"></div>
+  </section>
+
+  <div class="grid">
+    <section class="card">
+      <div class="card-head"><h2>By client</h2></div>
+      <div id="by_client"></div>
+    </section>
+    <section class="card">
+      <div class="card-head"><h2>By app</h2></div>
+      <div id="by_app"></div>
+    </section>
+    <section class="card">
+      <div class="card-head"><h2>By category</h2></div>
+      <div id="by_category"></div>
+    </section>
+    <section class="card">
+      <div class="card-head"><h2>By site</h2></div>
+      <div id="by_domain"></div>
+    </section>
+  </div>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Needs a label</h2>
+      <span class="muted">Label one of these and every matching block, past and future, follows. The
+        &ldquo;around it&rdquo; column is whose work was in front just before and just after.</span>
+    </div>
+    <div id="review"></div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Rules <span class="muted" id="rule-count"></span></h2>
+      <span class="spacer"></span>
+      <button class="ghost" id="rules-toggle" aria-expanded="false">Show</button>
+    </div>
+    <div id="rules" hidden></div>
+  </section>
+
+  <footer>
+    <span id="db-line"></span>
+    <span class="spacer"></span>
+    <a id="export-link" href="/api/export.csv?range=week" download>Export this range as CSV</a>
+  </footer>
+</main>
+
+<div class="tip" id="tip" hidden></div>
+<datalist id="known-clients"></datalist>
+<datalist id="known-categories"></datalist>
+
+<script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,50 @@
+{
+  "_comment": "Edit this file, then run: launchctl kickstart -k gui/$(id -u)/ai.leadprinter.timetracker",
+
+  "host": "127.0.0.1",
+  "port": 8734,
+
+  "sample_interval_seconds": 5.0,
+  "idle_threshold_seconds": 180,
+  "min_event_seconds": 2.0,
+
+  "capture_window_titles": true,
+
+  "browser_heartbeat_timeout_seconds": 90,
+  "strip_query_strings": true,
+  "store_full_urls": true,
+
+  "excluded_apps": [
+    "1Password",
+    "Keychain Access",
+    "Bitwarden",
+    "Passwords",
+    "Messages",
+    "FaceTime"
+  ],
+
+  "excluded_title_patterns": [
+    "(?i)\\bpassword",
+    "(?i)\\bsecret\\b",
+    "(?i)\\bprivate browsing\\b",
+    "(?i)\\bincognito\\b"
+  ],
+
+  "excluded_domains": [],
+
+  "work_hours": { "start": 8, "end": 19 },
+
+  "browsers": {
+    "com.google.Chrome": "Chrome",
+    "com.google.Chrome.canary": "Chrome Canary",
+    "com.google.Chrome.beta": "Chrome Beta",
+    "com.brave.Browser": "Brave",
+    "com.microsoft.edgemac": "Edge",
+    "com.microsoft.edge": "Edge",
+    "company.thebrowser.Browser": "Arc",
+    "com.apple.Safari": "Safari",
+    "org.mozilla.firefox": "Firefox",
+    "ai.perplexity.comet": "Comet",
+    "com.sigmaos.sigmaos.macos": "SigmaOS"
+  }
+}
