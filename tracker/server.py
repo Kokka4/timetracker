@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
-from . import analytics, rules as rules_mod
+from . import analytics, pause as pause_mod, rules as rules_mod
 
 MAX_BODY = 256 * 1024
 EXTENSION_ORIGINS = (
@@ -39,13 +39,19 @@ RULE_TOGGLE_PATH = re.compile(r"^/api/rules/(\d+)/toggle$")
 
 
 class Context:
-    def __init__(self, cfg, store, watcher=None, ingest=None):
+    def __init__(self, cfg, store, watcher=None, ingest=None, pause=None):
         self.cfg = cfg
         self.store = store
         self.watcher = watcher
         self.ingest = ingest
+        self.pause = pause
         self.started_at = time.time()
         self.requests = 0
+
+    def pause_state(self) -> dict[str, Any]:
+        if self.pause is None:
+            return {"paused": False, "available": False}
+        return {**self.pause.state(), "available": True}
 
 
 def _summary(ctx: Context, params: dict[str, list[str]]) -> dict[str, Any]:
@@ -90,21 +96,51 @@ def make_handler(ctx: Context):
             if self.command != "HEAD":
                 self.wfile.write(body)
 
-        def _json(self, payload: Any, status: int = 200) -> None:
+        def _json(
+            self,
+            payload: Any,
+            status: int = 200,
+            extra: dict[str, str] | None = None,
+        ) -> None:
             body = json.dumps(payload, default=str).encode("utf-8")
-            self._send(status, body)
+            self._send(status, body, extra=extra)
 
         def _error(self, status: int, message: str) -> None:
             self._json({"ok": False, "error": message}, status=status)
 
-        def _body(self) -> dict[str, Any]:
+        def _drain_body(self) -> None:
+            """Take the request body off the socket, whoever ends up using it.
+
+            This server speaks HTTP/1.1, so connections are reused. A handler
+            that ignores its body leaves those bytes in the stream, and the
+            next request on that connection is then parsed starting from them:
+            the client gets a 501 for a method called `{}POST` and every
+            subsequent request on the connection is lost. Draining centrally,
+            before dispatch, is what makes that impossible to reintroduce by
+            adding an endpoint that happens not to care about its input.
+            """
+            self._raw_body = b""
             try:
                 length = int(self.headers.get("Content-Length") or 0)
             except ValueError:
+                return
+            if length <= 0:
+                return
+            if length <= MAX_BODY:
+                self._raw_body = self.rfile.read(length)
+                return
+            # Too big to parse, but it still has to come off the wire.
+            remaining = length
+            while remaining > 0:
+                chunk = self.rfile.read(min(65536, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+
+        def _body(self) -> dict[str, Any]:
+            raw = getattr(self, "_raw_body", b"")
+            if not raw:
                 return {}
-            if length <= 0 or length > MAX_BODY:
-                return {}
-            raw = self.rfile.read(length)
             try:
                 parsed = json.loads(raw.decode("utf-8"))
             except (UnicodeDecodeError, ValueError):
@@ -117,13 +153,33 @@ def make_handler(ctx: Context):
                 return True  # a direct POST, e.g. curl during setup
             return origin.startswith(EXTENSION_ORIGINS)
 
+        def _control_origin(self) -> bool:
+            """Who may work the off switch.
+
+            Wider than `_extension_origin` because the dashboard is served
+            from this same port and so posts with an `http://` origin, which
+            the ingest rule exists to reject. Still narrow enough that a page
+            you happen to have open cannot switch your tracker off behind your
+            back.
+            """
+            origin = self.headers.get("Origin")
+            if not origin:
+                return True
+            if origin.startswith(EXTENSION_ORIGINS):
+                return True
+            return origin in (
+                f"http://{ctx.cfg.host}:{ctx.cfg.port}",
+                f"http://127.0.0.1:{ctx.cfg.port}",
+                f"http://localhost:{ctx.cfg.port}",
+            )
+
         def _cors(self) -> dict[str, str]:
             origin = self.headers.get("Origin")
             if origin and origin.startswith(EXTENSION_ORIGINS):
                 return {
                     "Access-Control-Allow-Origin": origin,
                     "Access-Control-Allow-Headers": "Content-Type",
-                    "Access-Control-Allow-Methods": "POST, OPTIONS",
+                    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
                     "Access-Control-Max-Age": "86400",
                     "Vary": "Origin",
                 }
@@ -163,6 +219,13 @@ def make_handler(ctx: Context):
 
                 if path == "/api/status":
                     return self._json(self._status())
+                if path == "/api/pause":
+                    # The extension polls this to keep its badge honest, so it
+                    # needs the CORS headers that the read API otherwise has
+                    # no use for.
+                    return self._json(
+                        {"ok": True, "pause": ctx.pause_state()}, extra=self._cors()
+                    )
                 if path == "/api/summary":
                     return self._json(_summary(ctx, params))
                 if path == "/api/rules":
@@ -191,6 +254,7 @@ def make_handler(ctx: Context):
                 "server_uptime_seconds": round(time.time() - ctx.started_at, 1),
                 "requests": ctx.requests,
                 "today_seconds": round(today_total, 1),
+                "pause": ctx.pause_state(),
                 "watcher": ctx.watcher.status() if ctx.watcher else {"running": False},
                 "browser": ctx.ingest.status() if ctx.ingest else {"connected": False},
                 "database": ctx.store.stats(),
@@ -249,9 +313,14 @@ def make_handler(ctx: Context):
         def do_POST(self) -> None:  # noqa: N802
             ctx.requests += 1
             path = urlsplit(self.path).path
+            self._drain_body()
             try:
                 if path == "/api/ingest/chrome":
                     return self._ingest()
+                if path == "/api/pause":
+                    return self._pause()
+                if path == "/api/resume":
+                    return self._resume()
                 if path == "/api/rules":
                     return self._create_rule()
                 if path == "/api/label":
@@ -273,9 +342,43 @@ def make_handler(ctx: Context):
             payload = self._body()
             if not payload:
                 return self._error(400, "expected a JSON object")
-            result = ctx.ingest.heartbeat(payload)
-            body = json.dumps(result).encode("utf-8")
+
+            # The gate that actually enforces the off switch for the browser
+            # half. The extension stops sending of its own accord, but that
+            # depends on it having noticed, and an extension that has not
+            # noticed yet must not be able to write through.
+            state = ctx.pause_state()
+            if state.get("paused"):
+                result = {"ok": True, "state": "paused", "pause": state}
+            else:
+                result = ctx.ingest.heartbeat(payload)
+                result["pause"] = state
+
+            body = json.dumps(result, default=str).encode("utf-8")
             self._send(200, body, "application/json; charset=utf-8", self._cors())
+
+        def _pause(self) -> None:
+            if not self._control_origin():
+                return self._error(403, "not allowed to change the tracker state")
+            if ctx.pause is None:
+                return self._error(503, "the pause switch is not available")
+            try:
+                minutes = pause_mod.parse_request(self._body())
+            except ValueError as exc:
+                return self._error(400, str(exc))
+            state = ctx.pause.pause(minutes)
+            kind = "indefinitely" if minutes is None else f"for {minutes:g} min"
+            print(f"[pause] tracking paused {kind}", flush=True)
+            self._json({"ok": True, "pause": state}, extra=self._cors())
+
+        def _resume(self) -> None:
+            if not self._control_origin():
+                return self._error(403, "not allowed to change the tracker state")
+            if ctx.pause is None:
+                return self._error(503, "the pause switch is not available")
+            state = ctx.pause.resume()
+            print("[pause] tracking resumed", flush=True)
+            self._json({"ok": True, "pause": state}, extra=self._cors())
 
         def _create_rule(self) -> None:
             payload = self._body()
@@ -326,6 +429,7 @@ def make_handler(ctx: Context):
         def do_DELETE(self) -> None:  # noqa: N802
             ctx.requests += 1
             path = urlsplit(self.path).path
+            self._drain_body()
             match = RULE_ID_PATH.match(path)
             if not match:
                 return self._error(404, f"unknown endpoint: {path}")

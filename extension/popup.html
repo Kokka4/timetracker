@@ -51,26 +51,55 @@
     border: 1px solid var(--ring); background: transparent; color: var(--ink-1);
     cursor: pointer;
   }
+  button:disabled { opacity: 0.45; cursor: default; }
   button.primary { background: var(--accent); border-color: transparent; color: #fff; font-weight: 600; }
+  button.resume { background: var(--good); border-color: transparent; color: #fff; font-weight: 600; }
+  .pause-row { display: flex; gap: 6px; margin-top: 6px; }
+  .pause-row button { flex: 1; padding: 6px 0; text-align: center; }
+  /* An explicit `display` beats the browser's own [hidden] rule, so any
+     element given one here has to opt back in or the hidden attribute
+     silently does nothing. */
+  .pause-row[hidden], label[hidden] { display: none; }
   .note { margin-top: 12px; color: var(--muted); font-size: 11.5px; }
   .err { color: var(--critical); }
+  .banner {
+    display: none; margin: 0 0 12px; padding: 9px 10px; border-radius: 8px;
+    background: rgba(208, 59, 59, 0.12); border: 1px solid rgba(208, 59, 59, 0.4);
+    font-size: 12px; line-height: 1.4;
+  }
+  .banner.on { display: block; }
+  .banner b { color: var(--critical); }
+  .off .today { opacity: 0.35; }
 </style>
 </head>
 <body>
   <h1><span class="dot" id="dot"></span> Local Time Tracker</h1>
-  <div class="today" id="today">—</div>
-  <div class="sub" id="state">checking…</div>
+
+  <div class="banner" id="banner">
+    <b>Tracking is off.</b> <span id="banner-detail"></span>
+  </div>
+
+  <div class="today" id="today">&mdash;</div>
+  <div class="sub" id="state">checking&hellip;</div>
 
   <div class="row">
     <button class="primary" id="open">Open dashboard</button>
-    <button id="pause">Pause</button>
+    <button class="resume" id="resume" hidden>Resume tracking</button>
+  </div>
+
+  <label id="pause-label">Stop recording for</label>
+  <div class="pause-row" id="pause-row">
+    <button data-minutes="30">30 min</button>
+    <button data-minutes="60">1 h</button>
+    <button data-minutes="120">2 h</button>
+    <button data-minutes="">Until I resume</button>
   </div>
 
   <label for="endpoint">Tracker endpoint</label>
   <input type="text" id="endpoint" spellcheck="false" autocomplete="off">
 
-  <div class="note">Tab titles and URLs are posted to that address and nowhere
-    else. Incognito windows are never reported.</div>
+  <div class="note" id="note">Tab titles and URLs are posted to that address
+    and nowhere else. Incognito windows are never reported.</div>
 </body>
 <script src="popup.js"></script>
 </html>

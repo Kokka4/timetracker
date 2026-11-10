@@ -291,6 +291,26 @@ def run() -> int:
                 f"today: {_human(status.get('today_seconds') or 0)} · "
                 f"ticks: {watcher.get('ticks')} · errors: {watcher.get('errors')}",
             )
+            # Reported before anything else about recording, because a pause
+            # explains every symptom below it and nothing below it explains a
+            # pause.
+            resting = status.get("pause") or {}
+            if resting.get("paused"):
+                if resting.get("indefinite"):
+                    detail = "it stays off until you resume it"
+                else:
+                    detail = (
+                        "it resumes by itself in "
+                        f"{(resting.get('seconds_left') or 0) / 60:.0f} min"
+                    )
+                _line(
+                    WARN,
+                    "TRACKING IS PAUSED - nothing is being recorded",
+                    f"{detail}\n"
+                    "         resume it in the dashboard, from the extension icon,\n"
+                    "         or with:  python3 -m tracker resume",
+                )
+
             current = watcher.get("current")
             if current:
                 _line(

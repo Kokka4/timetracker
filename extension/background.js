@@ -17,7 +17,6 @@
 
 const DEFAULTS = {
   endpoint: "http://127.0.0.1:8734/api/ingest/chrome",
-  paused: false,
 };
 
 const HEARTBEAT_ALARM = "heartbeat";
@@ -25,6 +24,10 @@ const IDLE_SECONDS = 60;
 const MIN_POST_GAP_MS = 700;
 const REPEAT_AFTER_MS = 20000;
 const MAX_TRACKED_TABS = 300;
+/* How long a cached pause answer is trusted. Shorter than the heartbeat
+   alarm, so a pause that expires on the tracker side is noticed on the next
+   beat rather than whenever the user next opens the popup. */
+const PAUSE_TTL_MS = 25000;
 
 /* Globals are a cache, never state: every one of them may be gone on the next
    event, and nothing below depends on them surviving. */
@@ -40,6 +43,111 @@ async function settings() {
   } catch (_) {
     return { ...DEFAULTS };
   }
+}
+
+function baseFrom(endpoint) {
+  try {
+    return new URL(endpoint).origin;
+  } catch (_) {
+    return "http://127.0.0.1:8734";
+  }
+}
+
+/* -- the off switch ------------------------------------------------------
+ * The switch itself lives in the tracker, not here. This file holds a cache
+ * of the answer and nothing more, because an extension-local flag could only
+ * ever stop the browser half: the desktop watcher would carry on recording
+ * Chrome time, and a button that silently does a quarter of what it says is
+ * worse than no button. Everything below is about keeping the cache honest
+ * and the badge truthful. */
+
+async function cachedPause() {
+  try {
+    return (await chrome.storage.session.get("pause")).pause || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function paintBadge(entry) {
+  const paused = Boolean(entry && entry.paused);
+  try {
+    await chrome.action.setBadgeText({ text: paused ? "off" : "" });
+    if (paused) {
+      await chrome.action.setBadgeBackgroundColor({ color: "#d03b3b" });
+      await chrome.action.setTitle({
+        title: "Local Time Tracker: PAUSED, nothing is being recorded",
+      });
+    } else {
+      await chrome.action.setTitle({ title: "Local Time Tracker" });
+    }
+  } catch (_) {
+    /* no action surface, e.g. during install */
+  }
+}
+
+async function setPauseState(state) {
+  const entry = {
+    paused: Boolean(state && state.paused),
+    indefinite: Boolean(state && state.indefinite),
+    until: (state && state.until) || null,
+    reachable: true,
+    at: Date.now(),
+  };
+  try {
+    await chrome.storage.session.set({ pause: entry });
+  } catch (_) {
+    /* ignore */
+  }
+  await paintBadge(entry);
+  return entry;
+}
+
+async function refreshPause() {
+  const config = await settings();
+  try {
+    const response = await fetch(`${baseFrom(config.endpoint)}/api/pause`);
+    const body = await response.json();
+    return await setPauseState(body && body.pause);
+  } catch (_) {
+    /* The tracker is unreachable, which is not the same as paused and must
+       not be shown as it: nothing is being recorded either way, but telling
+       someone they paused it when they did not is how you lose a day. */
+    const entry = await cachedPause();
+    return entry ? { ...entry, reachable: false } : null;
+  }
+}
+
+async function isPaused() {
+  const entry = await cachedPause();
+  if (entry && Date.now() - entry.at < PAUSE_TTL_MS) return entry.paused;
+  const fresh = await refreshPause();
+  return Boolean(fresh && fresh.paused);
+}
+
+async function requestPause(minutes) {
+  const config = await settings();
+  const body = minutes === null ? { indefinite: true } : { minutes };
+  const response = await fetch(`${baseFrom(config.endpoint)}/api/pause`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const parsed = await response.json();
+  if (!response.ok) throw new Error(parsed.error || `HTTP ${response.status}`);
+  return setPauseState(parsed.pause);
+}
+
+async function requestResume() {
+  const config = await settings();
+  const response = await fetch(`${baseFrom(config.endpoint)}/api/resume`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  const parsed = await response.json();
+  if (!response.ok) throw new Error(parsed.error || `HTTP ${response.status}`);
+  return setPauseState(parsed.pause);
 }
 
 /* -- activity counters --------------------------------------------------
@@ -109,7 +217,13 @@ async function userIsActive() {
 
 async function report(reason, force = false) {
   const config = await settings();
-  if (config.paused) return;
+
+  /* The gate sits before currentTab() rather than before the fetch, and that
+     ordering is the whole point: while paused this worker never asks Chrome
+     which page you are on, so there is no URL to leak, drop or forget to
+     drop. The tracker refuses heartbeats while paused anyway, but that is a
+     second line, not the first. */
+  if (await isPaused()) return;
 
   let { focused, tab } = await currentTab();
   if (focused && !(await userIsActive())) focused = false;
@@ -152,6 +266,14 @@ async function report(reason, force = false) {
     await chrome.storage.session.set({
       health: { ok: response.ok, at: now, status: response.status, reason },
     });
+    /* Every reply carries the pause state, so the common case refreshes the
+       cache for free and the dedicated poll is only needed while paused. */
+    try {
+      const body = await response.json();
+      if (body && body.pause) await setPauseState(body.pause);
+    } catch (_) {
+      /* a reply we cannot parse tells us nothing about the switch */
+    }
   } catch (error) {
     // The tracker is not running. Nothing to retry: the next heartbeat carries
     // a fresh timestamp, and stale ones would be worse than none.
@@ -166,17 +288,26 @@ async function report(reason, force = false) {
 chrome.runtime.onInstalled.addListener(() => {
   chrome.alarms.create(HEARTBEAT_ALARM, { periodInMinutes: 0.5 });
   chrome.idle.setDetectionInterval(IDLE_SECONDS);
-  report("installed", true);
+  refreshPause().then(() => report("installed", true));
 });
 
 chrome.runtime.onStartup.addListener(() => {
   chrome.alarms.create(HEARTBEAT_ALARM, { periodInMinutes: 0.5 });
   chrome.idle.setDetectionInterval(IDLE_SECONDS);
-  report("startup", true);
+  /* A pause that was running when Chrome quit is still running now: the
+     tracker kept it, and the badge has to say so before the first beat. */
+  refreshPause().then((entry) => {
+    if (!entry || !entry.paused) report("startup", true);
+  });
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === HEARTBEAT_ALARM) report("alarm", true);
+  if (alarm.name !== HEARTBEAT_ALARM) return;
+  /* The beat is also the only thing that notices a pause expiring, since a
+     paused worker sends no heartbeats whose replies could tell it. */
+  refreshPause().then((entry) => {
+    if (!entry || !entry.paused) report("alarm", true);
+  });
 });
 
 chrome.tabs.onActivated.addListener(() => report("tab-activated", true));
@@ -215,8 +346,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "activity") {
     const tabId = sender && sender.tab ? sender.tab.id : null;
     (async () => {
-      const config = await settings();
-      if (!config.paused) await bumpActivity(tabId, message);
+      /* Counters are discarded rather than banked while paused. Banking them
+         would hand the tracker a keystroke count for the paused stretch the
+         moment it resumed, which is exactly the thing being switched off. */
+      if (!(await isPaused())) await bumpActivity(tabId, message);
       sendResponse({ ok: true });
     })();
     return true;
@@ -228,7 +361,35 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         settings(),
         chrome.storage.session.get("health"),
       ]);
-      sendResponse({ ok: true, config, health: session.health || null });
+      const pause = await refreshPause();
+      sendResponse({ ok: true, config, health: session.health || null, pause });
+    })();
+    return true;
+  }
+
+  if (message.type === "pause") {
+    (async () => {
+      try {
+        const pause = await requestPause(
+          message.minutes === undefined ? null : message.minutes
+        );
+        sendResponse({ ok: true, pause });
+      } catch (error) {
+        sendResponse({ ok: false, error: String(error && error.message) });
+      }
+    })();
+    return true;
+  }
+
+  if (message.type === "resume") {
+    (async () => {
+      try {
+        const pause = await requestResume();
+        await report("resumed", true);
+        sendResponse({ ok: true, pause });
+      } catch (error) {
+        sendResponse({ ok: false, error: String(error && error.message) });
+      }
     })();
     return true;
   }
@@ -241,7 +402,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false;
 });
 
-// A worker woken for any reason makes sure the alarm still exists.
+// A worker woken for any reason makes sure the alarm still exists, and that
+// the badge still reflects the tracker rather than whatever it said when the
+// worker was last killed.
 chrome.alarms.get(HEARTBEAT_ALARM).then((alarm) => {
   if (!alarm) chrome.alarms.create(HEARTBEAT_ALARM, { periodInMinutes: 0.5 });
+});
+cachedPause().then((entry) => {
+  if (entry) paintBadge(entry);
 });

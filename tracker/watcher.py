@@ -12,6 +12,10 @@ the difference between numbers you trust and numbers you don't:
   A monotonic clock jump larger than a few ticks means the machine was not
   running, and that stretch is recorded as a gap rather than credited to
   whatever happened to be frontmost when it went down.
+
+A fourth state, **paused**, is not handled here so much as refused: while the
+off switch is on this loop does not probe at all and writes nothing, not even
+the fact of the pause. See `pause.py`.
 """
 
 from __future__ import annotations
@@ -26,11 +30,12 @@ from . import macos
 class Watcher(threading.Thread):
     daemon = True
 
-    def __init__(self, cfg, store, ingest=None):
+    def __init__(self, cfg, store, ingest=None, pause=None):
         super().__init__(name="watcher")
         self.cfg = cfg
         self.store = store
         self.ingest = ingest
+        self.pause = pause
 
         # Not `_stop`: threading.Thread has a private _stop() method of its
         # own, and shadowing it with an attribute makes join() raise
@@ -46,6 +51,9 @@ class Watcher(threading.Thread):
         # No away period may begin before this: the last moment we know the
         # machine was both running and being used.
         self.away_floor: float = 0.0
+        # The boundary everything was closed at when the current pause began,
+        # or None when not paused.
+        self.paused_since: float | None = None
 
         self.ticks = 0
         self.errors = 0
@@ -83,6 +91,11 @@ class Watcher(threading.Thread):
     def tick(self) -> None:
         now = time.time()
         mono = time.monotonic()
+
+        # Before anything else, and deliberately before the probes: a paused
+        # tracker must not even ask macOS what you are doing.
+        if self._handle_pause(now, mono):
+            return
 
         # Probe BEFORE taking the lock. Every one of these shells out to macOS
         # and can block for seconds; holding the lock across them would stall
@@ -132,6 +145,62 @@ class Watcher(threading.Thread):
 
         if self.ingest:
             self.ingest.sweep(now)
+
+    def _handle_pause(self, now: float, mono: float) -> bool:
+        """Return True when this tick must record nothing whatsoever.
+
+        The state is re-read from the database every tick rather than cached,
+        which costs one primary-key lookup every five seconds and buys two
+        things: a pause set from the dashboard or the extension takes effect
+        without anything having to reach into this thread, and a pause that
+        expired while the machine was asleep is already over by the time we
+        look.
+        """
+        if self.pause is None:
+            return False
+
+        state = self.pause.state(now)
+
+        if state["paused"]:
+            with self._lock:
+                if self.paused_since is None:
+                    # Entering the pause. Close everything at the moment the
+                    # pause actually began, not at this tick: the click landed
+                    # up to one sample interval ago, and anything the previous
+                    # tick recorded after it has to be given back. An event
+                    # that started entirely inside the pause window collapses
+                    # to zero duration here and is deleted outright.
+                    boundary = state["since"] if state["since"] else now
+                    boundary = min(boundary, now)
+                    self._close_event(boundary)
+                    self._close_afk(boundary)
+                    if self.ingest:
+                        self.ingest.close_all(boundary)
+                    self.paused_since = boundary
+
+                # Keep both clocks current even though nothing is recorded.
+                # Suspension detection works by comparing the wall clock
+                # against the monotonic one, so leaving these stale would make
+                # the first tick after a long pause look exactly like waking
+                # from sleep and write a `gap` row across the whole pause:
+                # a permanent record of precisely the window we promised not
+                # to record. The same applies if the Mac really does sleep
+                # during a pause, which is why this runs on every paused tick
+                # and not only on the first.
+                self.last_mono, self.last_wall = mono, now
+                self.ticks += 1
+            return True
+
+        if self.paused_since is not None:
+            with self._lock:
+                # Resuming. `idle` will be large, because nobody told macOS
+                # about the pause, so without this floor the first away period
+                # after a resume would back-date itself across the entire
+                # paused stretch and reinstate it as `idle` time.
+                self.away_floor = max(self.away_floor, now)
+                self.last_mono, self.last_wall = mono, now
+                self.paused_since = None
+        return False
 
     def _detect_suspension(self, now: float, mono: float) -> None:
         """Account for the time this process was not running.
@@ -283,6 +352,10 @@ class Watcher(threading.Thread):
                 }
             return {
                 "running": self.is_alive(),
+                # Worth having here as well as at the top level: a watcher
+                # whose tick count climbs while nothing gets recorded is
+                # otherwise indistinguishable from a broken probe.
+                "paused": self.paused_since is not None,
                 "uptime_seconds": round(time.time() - self.started_at, 1),
                 "ticks": self.ticks,
                 "errors": self.errors,

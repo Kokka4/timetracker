@@ -214,8 +214,16 @@ Say this plainly — it is their machine and their data:
 - Nothing is uploaded; there is no account and no server
 - They can see everything at http://127.0.0.1:8734
 - They can exclude any app or site by editing `config.json`
-- They can stop it at any time: `cd ~/timetracker && ./uninstall.sh`
+- **They can switch it off whenever they like**, from the Pause button in the
+  dashboard header or from the extension icon: 30 minutes, 1 hour, 2 hours, or
+  until they turn it back on. Nothing is recorded while it is off, not even
+  the fact that it was off
+- They can stop it for good at any time: `cd ~/timetracker && ./uninstall.sh`
 - Deleting everything recorded: `./reset.sh`
+
+Show them the Pause button before you leave, and watch them use it once. It is
+the thing that makes the rest of this liveable, and a tracker somebody cannot
+switch off is one they quietly uninstall instead.
 
 If you want the numbers from them, they export and send them. The tool has no
 way to report to you, and that is deliberate — the moment it does, this stops
@@ -244,6 +252,7 @@ Then `launchctl kickstart -k gui/$(id -u)/ai.leadprinter.timetracker`.
 | `port 8734 is already in use` | Something else has it | Edit `"port"` in `config.json`, re-run `./install.sh`, and update the endpoint in the extension popup |
 | Dashboard says "not answering" | Agent failed to start | `tail -20 logs/tracker.err.log` |
 | `No module named tracker` in the log | Agent cannot read the folder | It is in Desktop/Documents/Downloads — move it: `mv ~/Desktop/timetracker ~/timetracker && cd ~/timetracker && ./install.sh` |
+| Nothing is recorded at all, dashboard shows a red banner | It is paused | Resume from the dashboard, the extension icon, or `$(cat .python) -m tracker resume`. `./doctor.sh` says so in a `warn` at the top |
 | All time credited to one app | Frontmost-app probe stuck | `./doctor.sh probe 20` and send me the output |
 | Titles empty | Accessibility not granted, or granted to a different Python | `./doctor.sh` prints the exact path to add |
 | "By site" empty but extension loaded | Desktop side never reports Chrome | Run the probe — this is the same fault as the row above |
@@ -329,5 +338,6 @@ Print this bit.
 [ ] ./doctor.sh probe 15  -> app column changes when switching apps
 [ ] Dashboard shows a live timer and a rising "By site"
 [ ] Exclusions added to config.json for anything private
+[ ] Showed them Pause, and watched them pause and resume once
 [ ] Explained what is recorded, and how to stop it
 ```

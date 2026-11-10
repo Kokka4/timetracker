@@ -124,6 +124,46 @@ obligations that come with that under GDPR.
 
 ---
 
+## The off switch
+
+A pause stops **both** halves. The watcher does not probe, the extension does
+not read which tab is in front, and the ingest endpoint refuses heartbeats
+from an extension that has not caught up yet. There are three ways in, all
+driving the same state:
+
+- **Dashboard** — the Pause button in the header: 30 minutes, 1 hour, 2 hours,
+  or until you turn it back on.
+- **Chrome** — the same four choices in the extension popup. The toolbar icon
+  carries an `off` badge for as long as it lasts.
+- **Terminal** — for when neither is to hand, and it works whether or not the
+  agent is running:
+
+```bash
+$(cat .python) -m tracker pause 30     # minutes
+$(cat .python) -m tracker pause off    # until resumed
+$(cat .python) -m tracker resume
+$(cat .python) -m tracker pause        # just report the current state
+```
+
+**Nothing at all is recorded, including the fact of the pause.** No event, no
+away row, and no marker. That is deliberate, and it has a price worth knowing
+before you rely on it: a paused stretch is indistinguishable from the Mac
+having been shut, and turns up in the dashboard as unaccounted time inside the
+day's span rather than as anything explained. The daily reconciliation of
+active + away against the span does not hold across one.
+
+Because the data will never tell you a pause happened, the live indicators are
+the only warning: a red banner across the dashboard, `paused` in the header,
+the badge in Chrome, and a `warn` line at the top of `./doctor.sh`. A pause
+survives a restart and a reboot on purpose, so an indefinite one really does
+mean indefinite.
+
+Pause is for the ad-hoc case. For things that should never be recorded at all,
+`excluded_apps` and `excluded_domains` are the better tool, because they need
+no remembering.
+
+---
+
 ## Configuration
 
 `config.json`, then:
@@ -165,11 +205,9 @@ Offline instead of a repo:
 ```
 
 The release is built from an allow-list, not an ignore-list, and refuses to
-build if a database or log file would end up inside it. If a `tracker.db`
-nevertheless arrives with a download, `bootstrap.sh` renames it to
-`data/inherited-<timestamp>.db` so that install starts from zero without
-anybody inheriting anyone else's history. It never deletes a database, and
-never touches one that was already on the machine before the fetch.
+build if a database or log file would end up inside it. `bootstrap.sh` deletes
+any `tracker.db` that arrives with a download, so nobody inherits anyone
+else's history.
 
 Updating a machine later:
 
@@ -189,8 +227,16 @@ cd ~/timetracker && ./update.sh
 
 tail -f logs/tracker.err.log
 launchctl kickstart -k gui/$(id -u)/ai.leadprinter.timetracker   # restart
-./.python -m tracker purge 365                                   # drop old data
+
+$(cat .python) -m tracker pause 30    # stop recording for 30 minutes
+$(cat .python) -m tracker pause off   # stop until you resume
+$(cat .python) -m tracker resume
+$(cat .python) -m tracker purge 365   # drop old data
 ```
+
+> `.python` holds the path to the interpreter this install uses, which is why
+> those read `$(cat .python)` rather than `python3`: the agent, the
+> Accessibility grant and the command line all have to mean the same binary.
 
 ---
 

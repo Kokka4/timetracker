@@ -675,6 +675,11 @@ function renderNotices(status) {
   const watcher = status.watcher || {};
   const browser = status.browser || {};
 
+  /* While paused, every warning below is both true and useless: of course the
+     extension is not reporting. Stacking them under the pause banner would
+     only teach you to stop reading banners. */
+  if ((status.pause || {}).paused) return;
+
   if (watcher.titles_allowed === false) {
     host.appendChild(h("div", { class: "banner" }, [
       h("b", { text: "Window titles are off. " }),
@@ -713,6 +718,78 @@ function note(message) {
   setTimeout(() => banner.remove(), 6000);
 }
 
+/* -- the off switch ----------------------------------------------------- */
+
+let pauseTicker = null;
+
+function pauseDetail(pause) {
+  if (pause.indefinite) {
+    return "It stays off until you turn it back on, including after a restart.";
+  }
+  /* `dur` rather than `durShort`: whole minutes for most of a pause, and
+     exact seconds only inside the last one, which is the only point at which
+     seconds are worth reading. */
+  const left = Math.max(0, Math.round(pause.seconds_left || 0));
+  const at = pause.until ? clock(pause.until) : null;
+  return `Recording comes back in ${dur(left)}${at ? ` (at ${at})` : ""}.`;
+}
+
+function closePauseMenu() {
+  $("pause-menu").hidden = true;
+  $("pause-open").setAttribute("aria-expanded", "false");
+}
+
+function renderPause(status) {
+  const pause = (status && status.pause) || null;
+  const on = Boolean(pause && pause.paused);
+
+  $("pause-banner").hidden = !on;
+  $("pause-open").hidden = on;
+  $("pause-resume").hidden = !on;
+  if (on) $("pause-banner-detail").textContent = pauseDetail(pause);
+  else closePauseMenu();
+
+  /* A countdown that runs only while there is something to count. The status
+     poll is too coarse for a number somebody is watching in order to decide
+     whether to wait it out or resume now. */
+  if (pauseTicker) {
+    clearInterval(pauseTicker);
+    pauseTicker = null;
+  }
+  if (on && !pause.indefinite) {
+    let left = pause.seconds_left || 0;
+    pauseTicker = setInterval(() => {
+      left -= 1;
+      if (left <= 0) {
+        clearInterval(pauseTicker);
+        pauseTicker = null;
+        pollStatus();
+        return;
+      }
+      /* Ticks every second but writes only when the words change, so a long
+         pause repaints once a minute and the last minute repaints properly. */
+      const next = pauseDetail({ ...pause, seconds_left: left });
+      const node = $("pause-banner-detail");
+      if (node.textContent !== next) node.textContent = next;
+    }, 1000);
+  }
+}
+
+async function setPaused(body) {
+  try {
+    const payload = body
+      ? await api("/api/pause", body)
+      : await api("/api/resume", {});
+    if (state.status) state.status.pause = payload.pause;
+    renderPause(state.status || { pause: payload.pause });
+    /* Reload rather than wait for the next poll: the totals change the
+       instant recording stops or starts. */
+    await refresh();
+  } catch (error) {
+    note(`Could not change the tracker state: ${error.message}`);
+  }
+}
+
 /* -- status line -------------------------------------------------------- */
 
 function renderStatus(status) {
@@ -730,24 +807,28 @@ function renderStatus(status) {
   const watcher = status.watcher || {};
   const current = watcher.current;
   const away = watcher.away;
+  const pause = status.pause || {};
 
-  if (!watcher.running) {
+  if (pause.paused) {
+    dot.className = "dot down";
+    dot.title = "paused: nothing is being recorded";
+    line.textContent = pause.indefinite
+      ? "paused"
+      : `paused, back in ${durShort(pause.seconds_left || 0)}`;
+  } else if (!watcher.running) {
     dot.className = "dot down";
     dot.title = "watcher stopped";
+    line.textContent = `today ${dur(status.today_seconds)}`;
   } else if (away) {
     dot.className = "dot stale";
     dot.title = `away (${away.kind})`;
+    line.textContent = `away ${dur(away.seconds)} · today ${dur(status.today_seconds)}`;
   } else {
     dot.className = "dot live";
     dot.title = "tracking";
-  }
-
-  if (away) {
-    line.textContent = `away ${dur(away.seconds)} · today ${dur(status.today_seconds)}`;
-  } else if (current) {
-    line.textContent = `${current.app} ${dur(current.seconds)} · today ${dur(status.today_seconds)}`;
-  } else {
-    line.textContent = `today ${dur(status.today_seconds)}`;
+    line.textContent = current
+      ? `${current.app} ${dur(current.seconds)} · today ${dur(status.today_seconds)}`
+      : `today ${dur(status.today_seconds)}`;
   }
 
   const db = status.database || {};
@@ -843,10 +924,12 @@ async function pollStatus() {
     const status = await api("/api/status");
     state.status = status;
     renderStatus(status);
+    renderPause(status);
     renderNotices(status);
   } catch (_) {
     state.status = null;
     renderStatus(null);
+    renderPause(null);
     renderNotices(null);
   }
 }
@@ -865,6 +948,33 @@ function selectRange(range) {
 $("ranges").addEventListener("click", (event) => {
   const button = event.target.closest("button[data-range]");
   if (button) selectRange(button.dataset.range);
+});
+
+$("pause-open").addEventListener("click", (event) => {
+  event.stopPropagation();
+  const menu = $("pause-menu");
+  menu.hidden = !menu.hidden;
+  $("pause-open").setAttribute("aria-expanded", String(!menu.hidden));
+});
+
+$("pause-menu").addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-minutes]");
+  if (!button) return;
+  const raw = button.dataset.minutes;
+  closePauseMenu();
+  setPaused(raw === "" ? { indefinite: true } : { minutes: Number(raw) });
+});
+
+for (const id of ["pause-resume", "pause-banner-resume"]) {
+  $(id).addEventListener("click", () => setPaused(null));
+}
+
+document.addEventListener("click", (event) => {
+  if (!event.target.closest(".pause-wrap")) closePauseMenu();
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closePauseMenu();
 });
 
 $("theme").addEventListener("click", () => {

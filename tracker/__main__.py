@@ -5,6 +5,9 @@
     python3 -m tracker probe      watch the probes live while you switch apps
     python3 -m tracker status     print the running tracker's status as JSON
     python3 -m tracker stats      print database counts
+    python3 -m tracker pause 30   stop recording for 30 minutes
+    python3 -m tracker pause off  stop recording until told otherwise
+    python3 -m tracker resume     start recording again
     python3 -m tracker purge 180  delete everything older than 180 days
 """
 
@@ -20,6 +23,7 @@ from datetime import datetime
 from . import config, db
 from . import rules as rules_mod
 from .ingest import BrowserIngest
+from .pause import Pause
 from .server import Context, serve
 from .watcher import Watcher
 
@@ -40,8 +44,9 @@ def run() -> int:
     seeded = store.seed_rules(rules_mod.SEED_RULES)
 
     ingest = BrowserIngest(cfg, store)
-    watcher = Watcher(cfg, store, ingest)
-    ctx = Context(cfg, store, watcher, ingest)
+    pause = Pause(store)
+    watcher = Watcher(cfg, store, ingest, pause)
+    ctx = Context(cfg, store, watcher, ingest, pause)
 
     try:
         httpd = serve(ctx)
@@ -58,6 +63,17 @@ def run() -> int:
     log(f"  titles    {'on' if cfg.capture_titles else 'off'}")
     if seeded:
         log(f"  seeded    {seeded} starter rules")
+
+    # Say this loudly. A pause survives a restart on purpose, which means an
+    # agent relaunched by launchd can come up recording nothing, and the log
+    # is the one place someone debugging that will look.
+    resting = pause.state()
+    if resting["paused"]:
+        if resting["indefinite"]:
+            log("  PAUSED    tracking is OFF until you resume it")
+        else:
+            log(f"  PAUSED    tracking is OFF for another "
+                f"{resting['seconds_left'] / 60:.0f} min")
 
     watcher.start()
 
@@ -82,7 +98,7 @@ def run() -> int:
         while not stopping.wait(1.0):
             if not watcher.is_alive():
                 log("watcher thread died; restarting it")
-                watcher = Watcher(cfg, store, ingest)
+                watcher = Watcher(cfg, store, ingest, pause)
                 ctx.watcher = watcher
                 watcher.start()
     except KeyboardInterrupt:
@@ -117,6 +133,49 @@ def stats() -> int:
     cfg = config.load()
     store = db.Store(cfg.db_path)
     print(json.dumps(store.stats(), indent=2, default=str))
+    return 0
+
+
+def _describe_pause(state: dict) -> str:
+    if not state["paused"]:
+        return "recording"
+    if state["indefinite"]:
+        return "paused until you resume it"
+    left = state["seconds_left"] or 0
+    return f"paused for another {left / 60:.0f} min"
+
+
+def pause_cmd(argv: list[str]) -> int:
+    """Work the switch without the dashboard or the extension.
+
+    Writing straight to the database rather than posting to the server, so it
+    still works when the agent is not running: the state is read on the next
+    tick either way.
+    """
+    cfg = config.load()
+    state = Pause(db.Store(cfg.db_path))
+
+    if not argv:
+        print(_describe_pause(state.state()))
+        return 0
+
+    word = argv[0].casefold()
+    if word in ("off", "forever", "indefinite", "until-resumed"):
+        print(_describe_pause(state.pause(None)))
+        return 0
+
+    try:
+        minutes = float(word)
+    except ValueError:
+        print(f"usage: python3 -m tracker pause <minutes|off>  (got {argv[0]!r})")
+        return 2
+    print(_describe_pause(state.pause(minutes)))
+    return 0
+
+
+def resume_cmd() -> int:
+    cfg = config.load()
+    print(_describe_pause(Pause(db.Store(cfg.db_path)).resume()))
     return 0
 
 
@@ -162,6 +221,10 @@ def main(argv: list[str] | None = None) -> int:
         return status()
     if command == "stats":
         return stats()
+    if command == "pause":
+        return pause_cmd(argv[1:])
+    if command == "resume":
+        return resume_cmd()
     if command == "purge":
         return purge(argv[1:])
     if command in ("-h", "--help", "help"):

@@ -353,6 +353,9 @@ class Store:
         ).fetchone()
         return row["value"] if row else default
 
+    def delete_meta(self, key: str) -> None:
+        self._write("DELETE FROM meta WHERE key = ?", (key,))
+
     def stats(self) -> dict[str, Any]:
         conn = self.conn()
         out: dict[str, Any] = {}

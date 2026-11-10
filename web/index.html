@@ -24,11 +24,35 @@
 
   <div class="bar-right">
     <span class="muted" id="now-line"></span>
+
+    <div class="pause-wrap">
+      <button class="ghost" id="pause-open" aria-haspopup="true" aria-expanded="false"
+              title="Stop recording for a while">Pause</button>
+      <button class="resume" id="pause-resume" hidden>Resume tracking</button>
+      <div class="pause-menu" id="pause-menu" role="menu" hidden>
+        <div class="pause-menu-head">Stop recording for</div>
+        <button role="menuitem" data-minutes="30">30 minutes</button>
+        <button role="menuitem" data-minutes="60">1 hour</button>
+        <button role="menuitem" data-minutes="120">2 hours</button>
+        <button role="menuitem" data-minutes="">Until I turn it back on</button>
+        <div class="pause-menu-note">Nothing is recorded while it is off, and
+          nothing is kept about the gap either.</div>
+      </div>
+    </div>
+
     <button class="ghost" id="theme" title="Switch light / dark" aria-label="Switch light or dark theme">&#9686;</button>
   </div>
 </header>
 
 <main>
+  <div class="pause-banner" id="pause-banner" hidden role="status">
+    <div class="pause-banner-main">
+      <b>Tracking is off.</b>
+      <span id="pause-banner-detail"></span>
+    </div>
+    <button class="resume" id="pause-banner-resume">Resume tracking</button>
+  </div>
+
   <div id="notices"></div>
 
   <section class="tiles" id="tiles" aria-label="Headline figures"></section>
