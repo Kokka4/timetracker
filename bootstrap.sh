@@ -1,17 +1,17 @@
 #!/bin/bash
 # One-command install on a Mac that has never seen this project.
 #
-#   curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/bootstrap.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/kokka4/timetracker/main/bootstrap.sh | bash
 #
-# Set OWNER/REPO below once, or override at the call site:
-#   TRACKER_REPO=https://github.com/you/timetracker.git bash bootstrap.sh
+# Override the repository or branch at the call site if you need to:
+#   TRACKER_REPO=https://github.com/you/fork.git bash bootstrap.sh
 #
 # Safe to re-run. On a machine that already has it, this updates instead of
 # reinstalling, and never touches recorded data.
 
 set -euo pipefail
 
-REPO_URL="${TRACKER_REPO:-https://github.com/OWNER/REPO.git}"
+REPO_URL="${TRACKER_REPO:-https://github.com/kokka4/timetracker.git}"
 DEST="${TRACKER_DIR:-$HOME/timetracker}"
 
 bold() { printf "\033[1m%s\033[0m\n" "$*"; }

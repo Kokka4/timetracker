@@ -155,7 +155,7 @@ no server. Nothing reports anywhere.
 clicks, verification and troubleshooting. Budget 10 minutes per Mac.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/bootstrap.sh | bash
+curl -fsSL https://raw.githubusercontent.com/kokka4/timetracker/main/bootstrap.sh | bash
 ```
 
 Offline instead of a repo:

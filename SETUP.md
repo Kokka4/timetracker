@@ -1,7 +1,11 @@
 # Setup sheet — installing on someone else's Mac
 
 Written to be followed while standing at the machine. **Budget 10 minutes**, or
-25 if Command Line Tools have to be installed first.
+13 if Python has to be installed first.
+
+No Xcode, no Command Line Tools, no Homebrew, no `pip`, no accounts. The only
+thing the Mac must have that it might not is a Python interpreter, and that is
+a 78 MB double-click.
 
 Everything stays on that Mac. No account, no server, no data leaves the laptop.
 
@@ -20,6 +24,17 @@ Decide where it goes. Default is `~/timetracker`. **Not** Desktop, Documents or
 Downloads — macOS blocks background agents from reading those folders, and the
 failure is silent.
 
+Thirty seconds that can save you ten minutes — ask them to run this before you
+arrive, or run it first thing:
+
+```bash
+python3 --version
+```
+
+A version number means you are clear. "command not found", or a dialog
+offering to install developer tools, means step 2 will need the 78 MB Python
+package first.
+
 ---
 
 ## 1. Open Terminal
@@ -30,10 +45,10 @@ failure is silent.
 
 ## 2. Run the installer
 
-One command. Replace `OWNER/REPO` with your repository:
+One command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/bootstrap.sh | bash
+curl -fsSL https://raw.githubusercontent.com/kokka4/timetracker/main/bootstrap.sh | bash
 ```
 
 <details>
@@ -276,8 +291,9 @@ Settings → Privacy & Security → Accessibility.
 Print this bit.
 
 ```
+[ ] python3 --version      -> if missing, install the 78 MB python.org pkg
 [ ] Terminal open
-[ ] curl … | bash          (xcode-select --install first if asked)
+[ ] curl … | bash
 [ ] ✓ dashboard live at http://127.0.0.1:8734
 [ ] ./doctor.sh                       -> no failures
 [ ] Accessibility granted + agent restarted      (optional)
