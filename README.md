@@ -204,10 +204,10 @@ driving the same state:
   agent is running:
 
 ```bash
-$(cat .python) -m tracker pause 30     # minutes
-$(cat .python) -m tracker pause off    # until resumed
-$(cat .python) -m tracker resume
-$(cat .python) -m tracker pause        # just report the current state
+./tracker.sh pause 30     # minutes
+./tracker.sh pause off    # until resumed
+./tracker.sh resume
+./tracker.sh pause        # just report the current state
 ```
 
 **Nothing at all is recorded, including the fact of the pause.** No event, no
@@ -294,15 +294,20 @@ cd ~/timetracker && ./update.sh
 tail -f logs/tracker.err.log
 launchctl kickstart -k gui/$(id -u)/ai.leadprinter.timetracker   # restart
 
-$(cat .python) -m tracker pause 30    # stop recording for 30 minutes
-$(cat .python) -m tracker pause off   # stop until you resume
-$(cat .python) -m tracker resume
-$(cat .python) -m tracker purge 365   # drop old data
+./tracker.sh pause 30    # stop recording for 30 minutes
+./tracker.sh pause off   # stop until you resume
+./tracker.sh resume
+./tracker.sh purge 365   # drop old data
 ```
 
-> `.python` holds the path to the interpreter this install uses, which is why
-> those read `$(cat .python)` rather than `python3`: the agent, the
-> Accessibility grant and the command line all have to mean the same binary.
+> `tracker.sh` exists so none of these has to be typed as
+> `$(cat .python) -m tracker …`. `.python` holds the path to the interpreter
+> this install uses, because the agent, the Accessibility grant and the
+> command line all have to mean the same binary — but that substitution
+> expands to nothing when the file is missing or you are in another
+> directory, and the shell then complains about `-m`. The wrapper finds the
+> interpreter, falls back to `python3`, and says so plainly if there is
+> none.
 
 ---
 

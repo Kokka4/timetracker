@@ -19,6 +19,27 @@ echo
 
 [ "$(uname -s)" = "Darwin" ] || die "This installs a macOS launch agent; you are on $(uname -s)."
 
+# -- Apple's command-line shims ---------------------------------------------
+# /usr/bin/git, /usr/bin/python3, /usr/bin/clang and friends are stubs, not
+# programs. On a Mac without the Command Line Tools they exist, pass -x, and
+# satisfy `command -v` — and the moment one is RUN it pops Apple's installer
+# dialog and starts a download of over a gigabyte. So never run one to find
+# out whether it works.
+#
+# `xcode-select -p` is the safe question. It prints the active developer
+# directory, or fails if there is none, and never offers to install anything.
+have_clt() { xcode-select -p >/dev/null 2>&1; }
+
+# True when the path is one of those stubs on a machine that has no real tools
+# behind it. Anything outside /usr/bin (Homebrew, python.org, pyenv) is a real
+# binary and is left alone.
+is_apple_shim() {
+  case "$1" in
+    /usr/bin/*) have_clt && return 1 || return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # -- 1. find a usable Python ------------------------------------------------
 # Homebrew's Python is preferred over /usr/bin/python3: the system one is a
 # stub that depends on the Command Line Tools, and macOS privacy permissions
@@ -46,6 +67,8 @@ $(command -v python3 2>/dev/null || true)
 for pattern in $CANDIDATES; do
   for candidate in $pattern; do   # unquoted: expands the globs above
     [ -n "$candidate" ] && [ -x "$candidate" ] || continue
+    # Skipped rather than probed: running it is what starts the download.
+    is_apple_shim "$candidate" && continue
     if "$candidate" -c 'import sys,sqlite3,http.server; assert sys.version_info>=(3,9)' >/dev/null 2>&1; then
       PYTHON="$candidate"
       break 2
@@ -56,8 +79,10 @@ done
 if [ -z "$PYTHON" ]; then
   printf "  \033[31m✗\033[0m No usable Python 3.9+ on this Mac.\n\n" >&2
   cat >&2 <<'NOPYTHON'
-  macOS ships a python3 stub that does nothing until a real interpreter is
-  installed. Two ways to fix it — the first is far smaller.
+  macOS ships a python3 that is only a stub. Running it does not start
+  Python — it offers to download Apple's developer toolchain, which is why
+  this installer refuses to touch it. Two ways to fix it, and the first is
+  far smaller.
 
   OPTION A — Python on its own (about 78 MB, two minutes)      <- recommended
 
@@ -105,7 +130,7 @@ fi
 
 mkdir -p "$DIR/data" "$DIR/logs" "$HOME/Library/LaunchAgents"
 chmod 700 "$DIR/data"
-chmod +x "$DIR/agent.sh" 2>/dev/null || true
+chmod +x "$DIR"/*.sh 2>/dev/null || true
 
 # Snapshot the history before touching anything. Installing should never be
 # able to cost you data, and once it has, "be more careful" is not a fix.

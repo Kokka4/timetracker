@@ -28,12 +28,20 @@ Thirty seconds that can save you ten minutes — ask them to run this before you
 arrive, or run it first thing:
 
 ```bash
-python3 --version
+ls -d /Library/Frameworks/Python.framework/Versions/*/bin/python3 \
+      /opt/homebrew/bin/python3 /usr/local/bin/python3 2>/dev/null
 ```
 
-A version number means you are clear. "command not found", or a dialog
-offering to install developer tools, means step 2 will need the 78 MB Python
-package first.
+A path means you are clear. No output at all means step 2 will need the
+78 MB python.org package first.
+
+> **Do not run `python3 --version` to check.** On a Mac without Apple's
+> Command Line Tools, `/usr/bin/python3` is not Python — it is a stub whose
+> only behaviour is to pop a dialog offering a download of over a gigabyte,
+> which takes about fifteen minutes. The same is true of `git`, `clang` and
+> `make`. The command above only looks at the filesystem, so it cannot
+> trigger anything. The installer applies the same rule: it skips every
+> `/usr/bin` stub rather than running one to see whether it works.
 
 ---
 
@@ -67,13 +75,15 @@ The only thing this Mac is missing. **You do not need Xcode or the Command
 Line Tools** — the installer no longer asks for them, and the download it does
 need is 78 MB rather than over a gigabyte.
 
-Check first, because plenty of Macs already have one somewhere:
+Check first, because plenty of Macs already have one somewhere — and check
+without running anything:
 
 ```bash
-python3 --version
+ls -d /Library/Frameworks/Python.framework/Versions/*/bin/python3 \
+      /opt/homebrew/bin/python3 /usr/local/bin/python3 2>/dev/null
 ```
 
-If that prints a version, you are fine — re-run the installer, it searches
+If that prints a path, you are fine — re-run the installer, it searches
 Homebrew, pyenv, Anaconda and python.org locations as well as PATH.
 
 If not, install Python on its own:
@@ -193,9 +203,17 @@ Expect `✓ server answering`, `✓ frontmost app detected`, and either
 `osascript` column must change as you switch. If it reports `STUCK`, stop and
 do not leave it in that state — every minute would be credited to one app.
 
-Finally, open **http://timetrack.localhost:8734** and confirm
+Finally, open **http://timetrack.localhost:8734**
 (**http://127.0.0.1:8734** works too, and is the fallback if a browser
-does not honour `.localhost`):
+does not honour `.localhost`).
+
+**The very first load is a black screen.** It states that the data stays on
+their machine, waits five seconds, then enables a **Continue** button. It
+cannot be clicked past, and it never appears again on that Mac. It is not a
+page that failed to load, and it is worth letting them read it rather than
+reaching over to click Continue for them.
+
+Then confirm:
 
 - The green dot top-left is lit
 - An app name and a rising timer appear top-right
@@ -214,7 +232,7 @@ Say this plainly — it is their machine and their data:
 - Incognito windows are never recorded
 - All of it lives in one file on their Mac: `~/timetracker/data/tracker.db`
 - Nothing is uploaded; there is no account and no server
-- They can see everything at http://127.0.0.1:8734
+- They can see everything at http://timetrack.localhost:8734
 - They can exclude any app or site by editing `config.json`
 - **They can switch it off whenever they like**, from the Pause button in the
   dashboard header or from the extension icon: 30 minutes, 1 hour, 2 hours, or
@@ -227,10 +245,11 @@ Show them the Pause button before you leave, and watch them use it once. It is
 the thing that makes the rest of this liveable, and a tracker somebody cannot
 switch off is one they quietly uninstall instead.
 
-### Then spend two minutes in "Your setup"
+### Then spend two minutes in Setup
 
-This is what makes it their tracker rather than yours. On the dashboard, open
-**Your setup** and do three things with them:
+The top bar has three pages: **Dashboard**, **Setup** and **Rules**. Setup is
+what makes it their tracker rather than yours. Open it and do three things
+with them:
 
 1. **Turn on the pack that matches their work.** Sales and outreach, software,
    design, marketing, finance, legal. It only adds rules, and turning it off
@@ -243,6 +262,17 @@ This is what makes it their tracker rather than yours. On the dashboard, open
 Out of the box everyone gets seven neutral categories (Email, Meetings, Comms,
 Docs, AI & research, Admin, Break) matched on things every Mac has. Nobody
 inherits anybody else's job.
+
+**Rules** is the third page: every match the tracker has learned, where each
+one came from, and a search box. Rules are read when you look, not when the
+block was recorded, so deleting a wrong one corrects the history it produced
+as well as everything it would have caught later.
+
+Show them **Unlabel** in Setup while you are there. It is on every category
+and client, and it strips that label off everything it was ever applied to
+without touching a single recorded block. It is the undo for the most common
+mistake on day one, which is attributing a whole week to one client by
+accident.
 
 If you want the numbers from them, they export and send them. The tool has no
 way to report to you, and that is deliberate — the moment it does, this stops
@@ -266,12 +296,13 @@ Then `launchctl kickstart -k gui/$(id -u)/ai.leadprinter.timetracker`.
 | Symptom | Cause | Fix |
 |---|---|---|
 | `No usable Python 3.9+` | No interpreter on the machine | Install the 78 MB python.org package (step 2), re-run. Not Xcode. |
+| A dialog offers to install developer tools | Something ran `/usr/bin/python3`, `git`, `clang` or `make`, which are stubs | Cancel it. The installer never runs those. Check for Python with the `ls` command in step 0 instead |
 | `could not download …codeload…` | Repo is private, or branch is not `main` | Make it public, or use the zip from `make-release.sh` |
 | `Bootstrap failed: 5: Input/output error` | launchd race after an uninstall | Wait 10s, run `./install.sh` again |
 | `port 8734 is already in use` | Something else has it | Edit `"port"` in `config.json`, re-run `./install.sh`, and update the endpoint in the extension popup |
 | Dashboard says "not answering" | Agent failed to start | `tail -20 logs/tracker.err.log` |
 | `No module named tracker` in the log | Agent cannot read the folder | It is in Desktop/Documents/Downloads — move it: `mv ~/Desktop/timetracker ~/timetracker && cd ~/timetracker && ./install.sh` |
-| Nothing is recorded at all, dashboard shows a red banner | It is paused | Resume from the dashboard, the extension icon, or `$(cat .python) -m tracker resume`. `./doctor.sh` says so in a `warn` at the top |
+| Nothing is recorded at all, dashboard shows a red banner | It is paused | Resume from the dashboard, the extension icon, or `./tracker.sh resume`. `./doctor.sh` says so in a `warn` at the top |
 | All time credited to one app | Frontmost-app probe stuck | `./doctor.sh probe 20` and send me the output |
 | Titles empty | Accessibility not granted, or granted to a different Python | `./doctor.sh` prints the exact path to add |
 | "By site" empty but extension loaded | Desktop side never reports Chrome | Run the probe — this is the same fault as the row above |
@@ -346,10 +377,11 @@ Settings → Privacy & Security → Accessibility.
 Print this bit.
 
 ```
-[ ] python3 --version      -> if missing, install the 78 MB python.org pkg
+[ ] Checked for Python with ls, NOT with python3 --version
+[ ]   -> if none, install the 78 MB python.org pkg (not Xcode)
 [ ] Terminal open
 [ ] curl … | bash
-[ ] ✓ dashboard live at http://127.0.0.1:8734
+[ ] ✓ dashboard live at http://timetrack.localhost:8734
 [ ] ./doctor.sh                       -> no failures
 [ ] Accessibility granted + agent restarted      (optional)
 [ ] chrome://extensions -> Developer mode -> Load unpacked -> ~/timetracker/extension
@@ -357,8 +389,10 @@ Print this bit.
 [ ] ./doctor.sh probe 15  -> app column changes when switching apps
 [ ] Dashboard shows a live timer and a rising "By site"
 [ ] Exclusions added to config.json for anything private
+[ ] Welcome screen read, Continue pressed by them
 [ ] Showed them Pause, and watched them pause and resume once
-[ ] Your setup -> turned on the pack that matches their work
-[ ] Your setup -> added their clients
+[ ] Setup -> turned on the pack that matches their work
+[ ] Setup -> added their clients
+[ ] Showed them Unlabel, the undo for labelling the wrong thing in bulk
 [ ] Explained what is recorded, and how to stop it
 ```

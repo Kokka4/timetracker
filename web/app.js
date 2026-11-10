@@ -589,7 +589,7 @@ function renderReview(summary) {
         + "you go. Or add them all at once in "
       ),
     ]);
-    const link = h("button", { class: "linkish", text: "Your setup" });
+    const link = h("button", { class: "linkish", text: "Setup" });
     link.addEventListener("click", async () => {
       await showView("setup");
       setTimeout(() => $("client-new").focus(), 120);
