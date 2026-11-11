@@ -35,6 +35,7 @@ CONTENT_TYPES = {
     ".svg": "image/svg+xml",
 }
 RULE_ID_PATH = re.compile(r"^/api/rules/(\d+)$")
+MANUAL_ID_PATH = re.compile(r"^/api/manual/(\d+)$")
 RULE_TOGGLE_PATH = re.compile(r"^/api/rules/(\d+)/toggle$")
 CATEGORY_ID_PATH = re.compile(r"^/api/categories/(\d+)$")
 CLIENT_ID_PATH = re.compile(r"^/api/clients/(\d+)$")
@@ -459,6 +460,8 @@ def make_handler(ctx: Context):
                 if path == "/api/rules/dead":
                     removed = ctx.store.delete_dead_rules()
                     return self._json({"ok": True, "removed": removed})
+                if path == "/api/manual":
+                    return self._add_manual()
                 if path == "/api/assign":
                     return self._assign()
                 if path == "/api/unassign":
@@ -626,6 +629,51 @@ def make_handler(ctx: Context):
                 ],
             })
 
+        # -- time the Mac could not see ----------------------------------
+
+        def _add_manual(self) -> None:
+            payload = self._body()
+            window = self._delete_window(payload.get("start"), payload.get("end"))
+            if window is None:
+                return
+            start, end = window
+
+            note = (payload.get("note") or "").strip()
+            client = (payload.get("client") or "").strip() or None
+            category = (payload.get("category") or "").strip() or None
+            if not note and not client and not category:
+                return self._error(400, "say what the time was")
+
+            created: dict[str, str] = {}
+            if category and not ctx.store.category_named(category):
+                ctx.store.add_category(category, color=taxonomy.slot_for(category))
+                created["category"] = category
+            if client and not ctx.store.client_named(client):
+                ctx.store.add_client(client)
+                created["client"] = client
+
+            manual_id = ctx.store.add_manual_event(
+                start, end, note=note or None, client=client, category=category
+            )
+
+            # What it will actually contribute, which is rarely the whole
+            # window and is the number worth reporting back.
+            blocks = analytics.build_blocks(ctx.store, ctx.cfg, start, end)
+            filled = sum(
+                b["seconds"] for b in blocks
+                if b.get("manual") and b.get("manual_id") == manual_id
+            )
+            return self._json({
+                "ok": True,
+                "id": manual_id,
+                "start": start,
+                "end": end,
+                "requested": end - start,
+                "added": filled,
+                "already_recorded": max(0.0, (end - start) - filled),
+                "created": created,
+            })
+
         # -- assigning a stretch of time ---------------------------------
 
         def _assign(self, clearing: bool = False) -> None:
@@ -696,10 +744,11 @@ def make_handler(ctx: Context):
                 "shown": len(kept),
                 "blocks": [
                     {
-                        k: b[k] for k in (
+                        k: b.get(k) for k in (
                             "start", "end", "seconds", "app", "title", "domain",
                             "url", "client", "category", "project", "is_browser",
-                            "assigned", "assignment_id",
+                            "assigned", "assignment_id", "manual", "manual_id",
+                            "note",
                         )
                     }
                     for b in kept
@@ -949,6 +998,10 @@ def make_handler(ctx: Context):
             self._drain_body()
             if not self._control_origin():
                 return self._error(403, "not allowed to change the tracker")
+            manual = MANUAL_ID_PATH.match(path)
+            if manual:
+                removed = ctx.store.delete_manual_event(int(manual.group(1)))
+                return self._json({"ok": True, "removed": removed})
             match = RULE_ID_PATH.match(path)
             if not match:
                 return self._error(404, f"unknown endpoint: {path}")

@@ -20,7 +20,9 @@ a privacy policy, it is the architecture: there is nowhere for the data to go.
 - [Two ways to put a name on time](#two-ways-to-put-a-name-on-time)
 - [Writing a rule](#writing-a-rule)
 - [The Day page](#the-day-page)
+- [Elsewhere](#elsewhere)
 - [Removing time that was not work](#removing-time-that-was-not-work)
+- [Adding time the Mac could not see](#adding-time-the-mac-could-not-see)
 - [Export](#export)
 - [Making the vocabulary yours](#making-the-vocabulary-yours)
 - [The off switch](#the-off-switch)
@@ -281,6 +283,38 @@ flags each row in amber, and offers to remove them together.
 
 ---
 
+## Elsewhere
+
+Five cities down the left of the dashboard: New York, Reykjavik, Brussels,
+Tallinn, Dubai. They are ordered west to east, so the offsets run in
+sequence and the column reads as a line drawn across the globe rather than a
+list. Tallinn is marked as home and says `here` where the others say how far
+ahead or behind they are.
+
+Beside each one is a three-pixel sliver of that city's sky as it is at this
+moment, which is the only ornament in the thing and the reason five readouts
+read as one picture. It also carries the information you actually want from
+a world clock, which is not the digits but whether it is a reasonable hour to
+call: a dark sliver means they are asleep, a gold one means it is the end of
+their day. The date appears next to the time only when it is not the same
+date as it is here, which is the other thing that catches people out.
+
+Two details worth knowing:
+
+- **The clocks never store a timezone offset.** They ask the operating
+  system what the time is in each place, through the IANA database, so
+  daylight saving is never something this code has to be right about. The
+  offset shown is derived from the two answers. That matters most in the
+  weeks when Europe and the United States have changed their clocks on
+  different dates and New York is six hours behind Tallinn rather than seven.
+- **They sit in the sky, not in a card.** Everything else on the page is a
+  white card, and a card here would read as one more panel of figures to work
+  through. Where the window is wide enough, they occupy the empty gutter the
+  page already leaves; where it is not, they lie down in a strip across the
+  top instead. Nothing is lost on a narrow screen.
+
+---
+
 ## The Day page
 
 The strip on the dashboard draws one rectangle per block, and a real day is
@@ -292,6 +326,12 @@ A day is mostly four-second switches to Slack and back. A run of those folds
 into one line that says how many and how long, and opens if you want to look.
 The time stays in the totals either way; folding is a reading aid, never an
 arithmetic one. **Unlabelled** narrows the list to what still needs a name.
+
+The list also shows what is *not* there. Any gap of fifteen minutes or more
+appears in its place in the day, marked as nothing recorded, with a button
+that opens the add-time panel filled in with that gap. That is usually where
+a meeting was. See [Adding time the Mac could not
+see](#adding-time-the-mac-could-not-see).
 
 ---
 
@@ -334,6 +374,66 @@ machine and your database, and there is nobody to hide it from. And not how
 you stop recording something in the first place: for an app or site that is
 never work, put it in `excluded_apps` or `excluded_domains` and it is never
 recorded again. Deleting is for what has already happened.
+
+---
+
+## Adding time the Mac could not see
+
+A tracker that watches a screen misses every hour of work that happens away
+from one. A client meeting, a whiteboard, a phone call, a site visit, a
+flight: real work, invisible to the watcher, and the reason most people stop
+trusting an automatic tracker after the first week where half the week is
+missing.
+
+**Add time** on the Day page covers it. Give it a window, say what it was,
+and optionally a category and client. The Day page also offers each gap of
+fifteen minutes or more directly, with the window already filled in, since
+those are where the missing hours usually are.
+
+### It is a claim, not a recording
+
+This is the part that matters, and the part most tools get wrong. An entry
+asserts that you were working between two times. It does not pretend the Mac
+saw anything. So when the window you claim overlaps time that *was* recorded,
+only the empty parts of it are added:
+
+> You add 14:00 to 15:00 for a client call. The Mac recorded 14:20 to 14:35
+> in Zoom because you joined from your desk. Your day grows by 45 minutes,
+> not 60, and the confirmation says so: **Added 45m. 15m of that window was
+> already recorded, so it was left alone.**
+
+Every other way of doing this double counts. A spreadsheet row of "1h, client
+call" sits alongside the 15 minutes of recorded Zoom, and the day reads
+1h 15m. It still adds up, every line is defensible, and the total is wrong,
+which is the worst of the three. The tracker refuses to produce that number.
+
+The same rule makes two overlapping entries safe. Claim 09:00 to 11:00 and
+then 10:00 to 12:00 and you get three hours, not four. Each entry gives up
+whatever the entries before it already covered.
+
+### What an entry does to the rest of the day
+
+- **It counts as active time**, so the away time it covers stops being away.
+  An hour in a meeting room is no longer an hour of idling.
+- **It is reported separately.** The totals carry an added-by-hand figure
+  alongside the recorded one, the Day page marks the row, the CSV has a
+  `source` column that reads `added` or `recorded`, and the report names it.
+  Anyone reading the numbers can always see which part a machine measured.
+- **It can be labelled like anything else.** The category and client you give
+  it apply directly; assigning the row afterwards overrides them, in the same
+  way an assignment overrides a rule.
+- **Removing it removes only the claim.** Whatever the Mac actually recorded
+  inside that window was never the entry's to take, and stays exactly where
+  it was.
+
+Entries are stored, unlike classification: an entry is something you know and
+the tracker does not, so it is the one kind of fact that cannot be recomputed.
+How much of each entry *counts* is still worked out at read time, which is why
+recording something new inside a window you already claimed silently shrinks
+the claim rather than inflating the day.
+
+A window in the future is refused, and so is one with nothing said about it.
+A window that crosses midnight is read as the night it obviously means.
 
 ---
 
@@ -476,6 +576,10 @@ Worth knowing, because most trackers quietly get these wrong.
   see is computed from blocks, which are the join, never from the raw rows.
 - **Classification is computed at read time**, never stored, which is why
   editing a rule rewrites history.
+- **Time added by hand never overlaps time that was recorded.** An entry is
+  a claim over a window, and only the parts of that window with nothing in
+  them are added, so a day cannot count the same minute twice however many
+  entries cover it.
 - **Interaction counts are apportioned.** A tab's keystrokes are known for
   the whole visit, not per second, so when a visit is split across blocks the
   counts are divided by the share of time each piece keeps. The total is

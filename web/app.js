@@ -36,7 +36,15 @@ function h(tag, props = {}, kids = []) {
     if (value === null || value === undefined) continue;
     if (key === "class") node.className = value;
     else if (key === "text") node.textContent = value;
-    else if (key === "style") Object.assign(node.style, value);
+    // Object.assign onto a style object drops custom properties without a
+    // word: `--sky-now` is not a property of CSSStyleDeclaration, so the
+    // assignment does nothing and the element quietly renders its fallback.
+    else if (key === "style") {
+      for (const [prop, setting] of Object.entries(value)) {
+        if (prop.startsWith("--")) node.style.setProperty(prop, setting);
+        else node.style[prop] = setting;
+      }
+    }
     else if (key.startsWith("on")) node.addEventListener(key.slice(2), value);
     else node.setAttribute(key, value);
   }
@@ -927,6 +935,174 @@ function renderNotices(status) {
   }
 }
 
+/* -- the time elsewhere -------------------------------------------------
+ *
+ * Five cities, read off the machine's own clock through the IANA database,
+ * so daylight saving is never something this code has to know about. The
+ * only arithmetic here is the offset from home, and it is derived from the
+ * two formatted times rather than from a table, for the same reason.
+ */
+
+const HOME_ZONE = "Europe/Tallinn";
+
+// Ordered west to east further down, so the offsets run in sequence and the
+// column reads as a line drawn across the globe rather than a list.
+const CITIES = [
+  { name: "New York", zone: "America/New_York" },
+  { name: "Reykjavik", zone: "Atlantic/Reykjavik" },
+  { name: "Brussels", zone: "Europe/Brussels" },
+  { name: "Tallinn", zone: HOME_ZONE },
+  { name: "Dubai", zone: "Asia/Dubai" },
+];
+
+// The sky over a place, by the hour. Keyed on the hours where it changes
+// character and interpolated between, so a city at 06:40 gets the colour
+// between first light and dawn rather than one of five buckets.
+const SKY_RAMP = [
+  [0, [10, 20, 42]],
+  [5, [30, 48, 88]],
+  [6.5, [206, 112, 66]],
+  [8, [112, 166, 219]],
+  [12, [45, 118, 190]],
+  [16, [72, 142, 206]],
+  [18, [218, 128, 58]],
+  [19.5, [96, 82, 140]],
+  [21, [26, 40, 70]],
+  [24, [10, 20, 42]],
+];
+
+function skyAt(hour) {
+  for (let i = 1; i < SKY_RAMP.length; i += 1) {
+    const [h0, c0] = SKY_RAMP[i - 1];
+    const [h1, c1] = SKY_RAMP[i];
+    if (hour <= h1) {
+      const t = h1 === h0 ? 0 : (hour - h0) / (h1 - h0);
+      const mix = c0.map((v, k) => Math.round(v + (c1[k] - v) * t));
+      return `rgb(${mix[0]}, ${mix[1]}, ${mix[2]})`;
+    }
+  }
+  return "rgb(86, 158, 220)";
+}
+
+const ZONE_PARTS = new Map();
+
+function zoneFormatter(zone) {
+  if (!ZONE_PARTS.has(zone)) {
+    ZONE_PARTS.set(zone, new Intl.DateTimeFormat("en-GB", {
+      timeZone: zone, hour12: false, weekday: "short",
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit",
+    }));
+  }
+  return ZONE_PARTS.get(zone);
+}
+
+function readZone(zone, at) {
+  const parts = {};
+  for (const part of zoneFormatter(zone).formatToParts(at)) {
+    parts[part.type] = part.value;
+  }
+  // en-GB returns 24 for midnight in some engines, which would sort a city
+  // to the wrong end of the day and paint its sky at dusk.
+  const hour = Number(parts.hour) % 24;
+  const minute = Number(parts.minute);
+  return {
+    hour,
+    minute,
+    weekday: parts.weekday,
+    clock: `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`,
+    // The same instant written as if it were UTC. Two of these subtract to
+    // the offset between the zones, with no table and no DST rules here.
+    shifted: Date.UTC(Number(parts.year), Number(parts.month) - 1,
+                      Number(parts.day), hour, minute),
+  };
+}
+
+function offsetLabel(minutes) {
+  if (minutes === 0) return "same time";
+  const sign = minutes > 0 ? "+" : "−";
+  const whole = Math.abs(minutes);
+  const hours = Math.floor(whole / 60);
+  const rest = whole % 60;
+  if (!hours) return `${sign}${rest}m`;
+  return rest ? `${sign}${hours}h ${rest}m` : `${sign}${hours}h`;
+}
+
+function clockRows(at) {
+  const home = readZone(HOME_ZONE, at);
+  return CITIES.map((city) => {
+    const here = city.zone === HOME_ZONE ? home : readZone(city.zone, at);
+    const offset = Math.round((here.shifted - home.shifted) / 60000);
+    return {
+      name: city.name,
+      home: city.zone === HOME_ZONE,
+      clock: here.clock,
+      offset,
+      // Only worth saying when it is not the same day as it is here.
+      weekday: here.weekday === home.weekday ? null : here.weekday,
+      sky: skyAt(here.hour + here.minute / 60),
+      night: here.hour < 6 || here.hour >= 21,
+    };
+  }).sort((a, b) => a.offset - b.offset);
+}
+
+function clockNode(row) {
+  const classes = ["clock"];
+  if (row.home) classes.push("home");
+  if (row.night) classes.push("night");
+
+  const now = h("span", { class: "clock-now" }, [
+    h("time", { class: "clock-time", text: row.clock }),
+    row.home
+      ? h("span", { class: "clock-off", text: "here" })
+      : h("span", { class: "clock-off", text: offsetLabel(row.offset) }),
+  ]);
+  if (row.weekday) now.appendChild(h("span", { class: "clock-day", text: row.weekday }));
+
+  const li = h("li", {
+    class: classes.join(" "),
+    style: { "--sky-now": row.sky },
+    title: row.home
+      ? `${row.name}, where you are`
+      : `${row.name}, ${offsetLabel(row.offset)}${row.night ? ", the middle of the night" : ""}`,
+  }, [
+    h("span", { class: "clock-sky", "aria-hidden": "true" }),
+    h("span", { class: "clock-body" }, [
+      h("span", { class: "clock-city", text: row.name }),
+      now,
+    ]),
+  ]);
+  return li;
+}
+
+let clockPrint = "";
+
+function paintClocks() {
+  const host = $("clocks-list");
+  if (!host) return;
+  const rows = clockRows(new Date());
+  // A second passes a hundred times between one minute and the next, and
+  // rebuilding five rows each time would fight the screen reader for no
+  // visible gain. Nothing is touched until a figure actually changes.
+  const print = rows.map((r) => `${r.name}${r.clock}${r.sky}`).join("|");
+  if (print === clockPrint) return;
+  clockPrint = print;
+  host.replaceChildren(...rows.map(clockNode));
+}
+
+function startClocks() {
+  if (!$("clocks-list")) return;
+  paintClocks();
+  setInterval(paintClocks, 1000);
+  // Coming back to a sleeping laptop, the interval may have been throttled
+  // for hours. The clock has to be right before the eye reaches it.
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) paintClocks();
+  });
+}
+
+const note_ = (message) => note(message);
+
 /* Something to tell the person once, then forget. It goes in #flash, not
    #notices: the status poll rebuilds #notices every fifteen seconds and
    after every refresh, so a message put there is gone before it is read —
@@ -1612,9 +1788,18 @@ function paintDay() {
     return;
   }
 
-  for (const group of foldDay(wanted)) {
-    host.appendChild(group.folded ? foldedRow(group) : dayRow(group.blocks[0]));
-  }
+  // Gaps are only meaningful against the whole day, so they are found
+  // before the filter narrows it, and only shown when nothing is narrowed.
+  const gaps = state.day.filter === "all" ? dayGaps(all) : [];
+  const rows = [
+    ...foldDay(wanted).map((group) => ({
+      at: group.blocks[0].start,
+      node: () => (group.folded ? foldedRow(group) : dayRow(group.blocks[0])),
+    })),
+    ...gaps.map((gap) => ({ at: gap.start, node: () => gapRow(gap) })),
+  ].sort((a, b) => a.at - b.at);
+
+  for (const row of rows) host.appendChild(row.node());
 }
 
 /* Consecutive blocks shorter than the fold threshold become one row. A long
@@ -1682,6 +1867,7 @@ function foldedRow(group) {
 function dayRow(block) {
   const row = h("div", { class: "day-row" });
   if (block.client || block.category) row.classList.add("has-label");
+  if (block.manual) row.classList.add("added");
 
   row.appendChild(h("div", { class: "day-when num", text:
     `${clock(block.start)} – ${clock(block.end)}` }));
@@ -1703,6 +1889,9 @@ function dayRow(block) {
   }
   if (block.assigned) {
     now.appendChild(h("span", { class: "chip faint", text: "assigned" }));
+  }
+  if (block.manual) {
+    now.appendChild(h("span", { class: "chip faint", text: "added by hand" }));
   }
   row.appendChild(now);
 
@@ -1753,8 +1942,133 @@ function dayRow(block) {
 
   const actions = h("div", { class: "day-actions" }, [category, client, apply]);
   if (block.assigned) actions.appendChild(clearIt);
+  if (block.manual) {
+    // Removing the entry removes the claim. Whatever the Mac actually
+    // recorded inside that window was never the entry's to take and stays
+    // exactly where it was.
+    actions.appendChild(armedButton("Remove", "Remove?", "danger", async () => {
+      await api(`/api/manual/${block.manual_id}`, null, "DELETE");
+      await renderDay();
+      await refresh();
+    }, "Remove this added time"));
+  }
   row.appendChild(actions);
   return row;
+}
+
+/* -- time the Mac could not see -----------------------------------------
+ *
+ * An entry is a claim, not a recording. The tracker works out how much of it
+ * counts by filling only the parts of the window with nothing already in
+ * them, which is why the confirmation says what it actually added rather
+ * than what was asked for.
+ */
+
+// Shorter than this and a gap is just the walk to the kitchen.
+const GAP_WORTH_FILLING = 900;
+
+function dayGaps(blocks) {
+  const gaps = [];
+  for (let i = 1; i < blocks.length; i += 1) {
+    const from = blocks[i - 1].end;
+    const to = blocks[i].start;
+    if (to - from >= GAP_WORTH_FILLING) gaps.push({ start: from, end: to });
+  }
+  return gaps;
+}
+
+function gapRow(gap) {
+  const row = h("div", { class: "day-row gap" });
+  row.appendChild(h("div", { class: "day-when num", text:
+    `${clock(gap.start)} – ${clock(gap.end)}` }));
+  row.appendChild(h("div", { class: "day-span num muted",
+    text: dur(gap.end - gap.start) }));
+  row.appendChild(h("div", { class: "day-what muted", text: "nothing recorded" }));
+  const fill = h("button", { class: "act", text: "Add time here" });
+  fill.addEventListener("click", () => openManual(gap.start, gap.end));
+  row.appendChild(h("div"));
+  row.appendChild(h("div", { class: "day-actions" }, [fill]));
+  return row;
+}
+
+function openManual(startTs, endTs) {
+  const panel = $("manual-panel");
+  const now = Date.now() / 1000;
+  const start = startTs ?? now - 3600;
+  const end = endTs ?? now;
+  $("manual-day").value = toDayValue(start);
+  $("manual-from").value = toTimeValue(start);
+  $("manual-to").value = toTimeValue(end);
+  $("manual-preview").textContent =
+    "Only the part of this window with nothing recorded in it will be added.";
+  $("manual-note-out").textContent = "";
+  panel.hidden = false;
+  $("manual-note").focus();
+}
+
+function closeManual() {
+  $("manual-panel").hidden = true;
+  for (const id of ["manual-note", "manual-category", "manual-client"]) {
+    $(id).value = "";
+  }
+}
+
+function manualWindow() {
+  const day = $("manual-day").value;
+  const from = $("manual-from").value;
+  const to = $("manual-to").value;
+  if (!day || !from || !to) return null;
+  const start = new Date(`${day}T${from}`).getTime() / 1000;
+  let end = new Date(`${day}T${to}`).getTime() / 1000;
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  if (end <= start) end += 86400;          // a session that crossed midnight
+  return { start, end };
+}
+
+async function submitManual(event) {
+  event.preventDefault();
+  const window_ = manualWindow();
+  if (!window_) return;
+  const note = $("manual-note").value.trim();
+  const category = $("manual-category").value.trim();
+  const client = $("manual-client").value.trim();
+  if (!note && !category && !client) {
+    $("manual-note-out").textContent = "Say what the time was.";
+    $("manual-note").focus();
+    return;
+  }
+
+  $("manual-go").disabled = true;
+  $("manual-note-out").textContent = "Adding…";
+  try {
+    const result = await api("/api/manual", {
+      ...window_,
+      note: note || null,
+      category: category || null,
+      client: client || null,
+    });
+    closeManual();
+    const skipped = result.already_recorded > 60
+      ? ` ${dur(result.already_recorded)} of that window was already recorded, so it was left alone.`
+      : "";
+    note_(`Added ${dur(result.added)}.${skipped}`);
+    await renderDay();
+    await refresh();
+  } catch (error) {
+    $("manual-note-out").textContent = `Could not add it: ${error.message}`;
+  } finally {
+    $("manual-go").disabled = false;
+  }
+}
+
+function wireManual() {
+  if (!$("manual-panel")) return;
+  $("day-add").addEventListener("click", () => {
+    if ($("manual-panel").hidden) openManual();
+    else closeManual();
+  });
+  $("manual-cancel").addEventListener("click", closeManual);
+  $("manual-panel").addEventListener("submit", submitManual);
 }
 
 function wireDay() {
@@ -2239,6 +2553,8 @@ wireRemove();
 wireDay();
 wireRuleBuilder();
 wireExport();
+wireManual();
+startClocks();
 selectRange(savedRange);
 setInterval(pollStatus, 15000);
 setInterval(() => { if (LIVE_RANGES.has(state.range)) refresh(); }, 90000);

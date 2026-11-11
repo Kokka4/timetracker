@@ -78,6 +78,13 @@
   <div id="flash" aria-live="polite"></div>
 
     <section class="view" data-view="dashboard">
+  <!-- Sits in the sky to the left of the page where there is room for it,
+       and folds into a strip across the top where there is not. -->
+  <aside id="clocks" aria-label="The time in other places">
+    <h2 class="clocks-title">Elsewhere</h2>
+    <ol class="clocks-list" id="clocks-list"></ol>
+  </aside>
+
   <nav class="ranges" id="ranges" role="tablist" aria-label="Date range">
     <button role="tab" data-range="today">Today</button>
     <button role="tab" data-range="yesterday">Yesterday</button>
@@ -175,7 +182,37 @@
           <button role="tab" aria-selected="true" data-filter="all">Everything</button>
           <button role="tab" aria-selected="false" data-filter="unassigned">Unlabelled</button>
         </div>
+        <button class="ghost" id="day-add"
+                title="Record time the Mac could not see">Add time</button>
       </div>
+
+      <!-- A meeting in a room, a call, a journey. The entry says what you
+           claim; how much of it counts is worked out against what was
+           actually recorded, so it can never double count. -->
+      <form class="remove-panel" id="manual-panel" hidden>
+        <div class="remove-row">
+          <label>Day <input type="date" id="manual-day" required></label>
+          <label>From <input type="time" id="manual-from" step="60" required></label>
+          <label>To <input type="time" id="manual-to" step="60" required></label>
+          <button type="button" class="ghost" id="manual-cancel">Cancel</button>
+        </div>
+        <div class="remove-row manual-what">
+          <label>What it was
+            <input type="text" id="manual-note" maxlength="120"
+                   placeholder="Hanval kickoff call" autocomplete="off"></label>
+          <label>Category
+            <input type="text" id="manual-category" list="known-categories"
+                   placeholder="category" autocomplete="off"></label>
+          <label>Client
+            <input type="text" id="manual-client" list="known-clients"
+                   placeholder="client" autocomplete="off"></label>
+        </div>
+        <p class="remove-preview" id="manual-preview"></p>
+        <div class="remove-actions">
+          <button type="submit" class="primary" id="manual-go">Add this time</button>
+          <span class="muted" id="manual-note-out"></span>
+        </div>
+      </form>
       <p class="day-summary muted" id="day-summary"></p>
       <div id="day-list"></div>
     </section>

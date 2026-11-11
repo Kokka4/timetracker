@@ -206,7 +206,108 @@ def build_blocks(store, cfg, start_ts: float, end_ts: float) -> list[dict[str, A
             )
 
     blocks.sort(key=lambda b: b["start"])
+    blocks = _add_manual(blocks, store.manual_events(start_ts, end_ts),
+                         start_ts, end_ts)
     return _apply_assignments(blocks, store.assignments(start_ts, end_ts))
+
+
+def _add_manual(
+    blocks: list[dict[str, Any]],
+    entries: list[dict[str, Any]],
+    start_ts: float,
+    end_ts: float,
+) -> list[dict[str, Any]]:
+    """Turn asserted time into blocks, filling only what was not observed.
+
+    An entry says "I was in a meeting from ten to eleven". The Mac may have
+    seen fifteen minutes of Slack inside that hour, because the laptop was
+    open on the table. The honest total for that hour is sixty minutes, not
+    seventy-five, so the entry contributes only the parts with nothing
+    recorded in them.
+
+    Computed here rather than stored, which is what makes it impossible to
+    get wrong later: record something new inside the window tomorrow and the
+    entry shrinks on the next read. There is no stored number that can drift
+    out of agreement with the events.
+    """
+    if not entries:
+        return blocks
+
+    # Merge the observed intervals once, so each entry costs one linear scan.
+    merged = _merge_spans([(b["start"], b["end"]) for b in blocks])
+
+    out = list(blocks)
+    for entry in entries:
+        cursor = max(float(entry["start_ts"]), start_ts)
+        stop = min(float(entry["end_ts"]), end_ts)
+        made: list[tuple[float, float]] = []
+        for begin, finish in merged:
+            if finish <= cursor:
+                continue
+            if begin >= stop:
+                break
+            if begin > cursor:
+                made.append((cursor, min(begin, stop)))
+            cursor = max(cursor, finish)
+            if cursor >= stop:
+                break
+        if cursor < stop:
+            made.append((cursor, stop))
+
+        for begin, finish in made:
+            out.append(_manual_block(entry, begin, finish))
+
+        # Fold this entry's own output into what counts as covered. Entries
+        # know nothing about each other, so two meetings booked over the same
+        # half hour would each fill it and the day would gain thirty minutes
+        # that never happened.
+        if made:
+            merged = _merge_spans([tuple(span) for span in merged] + made)
+
+    out.sort(key=lambda b: b["start"])
+    return out
+
+
+def _merge_spans(spans: list[tuple[float, float]]) -> list[list[float]]:
+    merged: list[list[float]] = []
+    for begin, finish in sorted(spans):
+        if merged and begin <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], finish)
+        else:
+            merged.append([begin, finish])
+    return merged
+
+
+def _manual_block(entry: dict[str, Any], start: float, end: float) -> dict[str, Any]:
+    note = (entry.get("note") or "").strip() or "Added by hand"
+    return {
+        "start": start,
+        "end": end,
+        "seconds": end - start,
+        "app": note,
+        "bundle_id": None,
+        "title": None,
+        "domain": None,
+        "url": None,
+        "is_browser": False,
+        "browser": None,
+        "untracked_tab": False,
+        "keys": 0,
+        "clicks": 0,
+        "scrolls": 0,
+        "media": 0,
+        "client": entry.get("client"),
+        "project": entry.get("project"),
+        "category": entry.get("category"),
+        "rule_ids": [],
+        "assigned": False,
+        "assignment_id": None,
+        # A block the tracker watched happen and a block somebody typed in
+        # are both time, and a reader has every right to tell them apart.
+        "manual": True,
+        "manual_id": entry["id"],
+        "note": note,
+    }
 
 
 def _apply_assignments(
@@ -317,6 +418,8 @@ def _make_block(
         "rule_ids": label["rule_ids"],
         "assigned": False,
         "assignment_id": None,
+        "manual": False,
+        "manual_id": None,
         "keys": 0,
         "clicks": 0,
         "scrolls": 0,
@@ -394,12 +497,21 @@ def summarize(
             bounds[0] = min(bounds[0], block["start"])
             bounds[1] = max(bounds[1], block["end"])
 
+    # An hour you spent in a meeting with the laptop shut is recorded as a
+    # `gap`, and once you say it was a meeting it stops being away time. Left
+    # in, the same hour would count once as work and once as absence, and the
+    # day would reconcile to more hours than it holds.
+    manual_spans = [
+        (b["start"], b["end"]) for b in blocks if b.get("manual")
+    ]
+    usable_afk = _minus_spans(afk_rows, manual_spans) if manual_spans else afk_rows
+
     away = {kind: 0.0 for kind in AWAY_PRIORITY}
     away["total"] = 0.0
     span_seconds = 0.0
     for day_start, day_end in days.values():
         span_seconds += max(0.0, day_end - day_start)
-        for kind, seconds in away_summary(afk_rows, day_start, day_end).items():
+        for kind, seconds in away_summary(usable_afk, day_start, day_end).items():
             away[kind] += seconds
 
     span_start = min((b[0] for b in days.values()), default=window["start_ts"])
@@ -469,6 +581,13 @@ def summarize(
     return {
         "window": window,
         "total_seconds": round(total, 1),
+        # Active time includes what you added by hand, because an hour in a
+        # meeting room is an hour of work. It is reported separately as well,
+        # because "what the Mac observed" has to stay a question with an
+        # answer.
+        "manual_seconds": round(
+            sum(b["seconds"] for b in blocks if b.get("manual")), 1
+        ),
         "block_count": len(blocks),
         "client_seconds": round(client_work, 1),
         "client_share": round(client_work / total, 4) if total else 0.0,
@@ -505,6 +624,40 @@ def summarize(
 
 
 AWAY_PRIORITY = ("gap", "locked", "idle", "unknown")
+
+
+def _minus_spans(
+    rows: list[dict[str, Any]], spans: list[tuple[float, float]]
+) -> list[dict[str, Any]]:
+    """The away rows with `spans` cut out of them.
+
+    Cut rather than dropped: a two-hour gap with a one-hour meeting inside it
+    is still one hour of genuine absence, and discarding the whole row would
+    hand that hour back as unaccounted time.
+    """
+    if not spans:
+        return rows
+    ordered = sorted(spans)
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        pieces = [(float(row["start_ts"]), float(row["end_ts"]))]
+        for cut_start, cut_end in ordered:
+            next_pieces: list[tuple[float, float]] = []
+            for begin, finish in pieces:
+                if cut_end <= begin or cut_start >= finish:
+                    next_pieces.append((begin, finish))
+                    continue
+                if cut_start > begin:
+                    next_pieces.append((begin, cut_start))
+                if cut_end < finish:
+                    next_pieces.append((cut_end, finish))
+            pieces = next_pieces
+            if not pieces:
+                break
+        for begin, finish in pieces:
+            if finish > begin:
+                out.append({**row, "start_ts": begin, "end_ts": finish})
+    return out
 
 
 def away_summary(
@@ -684,6 +837,10 @@ def csv_rows(blocks: Iterable[dict[str, Any]]) -> Iterable[list[Any]]:
         "keys",
         "clicks",
         "scrolls",
+        # Whether the tracker watched this happen or somebody typed it in.
+        # Anyone doing arithmetic on this file is entitled to know which,
+        # and a column is the only way to say so that survives a spreadsheet.
+        "source",
     ]
     for block in blocks:
         yield [
@@ -699,4 +856,5 @@ def csv_rows(blocks: Iterable[dict[str, Any]]) -> Iterable[list[Any]]:
             block["keys"],
             block["clicks"],
             block["scrolls"],
+            "added" if block.get("manual") else "recorded",
         ]

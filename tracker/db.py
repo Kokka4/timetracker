@@ -131,6 +131,32 @@ CREATE TABLE IF NOT EXISTS assignments (
 );
 CREATE INDEX IF NOT EXISTS idx_assign_start ON assignments(start_ts);
 CREATE INDEX IF NOT EXISTS idx_assign_end   ON assignments(end_ts);
+
+-- Time the Mac could not see: a meeting in a room, a call, a journey.
+--
+-- Deliberately not a row in desktop_events. Everything else in this database
+-- was observed by a sampler; this was asserted by a person afterwards, and
+-- the difference has to stay answerable. Folding the two together would mean
+-- every existing query silently started counting time nobody watched happen,
+-- and no later query could separate them again.
+--
+-- An entry stores the claim, not the time. How much it actually contributes
+-- is worked out when you look, by filling whatever part of its window had no
+-- recorded activity. That is the same read-time rule as classification, and
+-- it is what makes double counting impossible: record something inside the
+-- window tomorrow and the entry simply shrinks.
+CREATE TABLE IF NOT EXISTS manual_events (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    start_ts   REAL NOT NULL,
+    end_ts     REAL NOT NULL,
+    note       TEXT,
+    client     TEXT,
+    project    TEXT,
+    category   TEXT,
+    created_ts REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_manual_start ON manual_events(start_ts);
+CREATE INDEX IF NOT EXISTS idx_manual_end   ON manual_events(end_ts);
 """
 
 
@@ -648,6 +674,48 @@ class Store:
                     "SELECT * FROM categories WHERE id = ?", (category_id,)
                 ).fetchone()
             )
+
+    # -- time the Mac could not see --------------------------------------
+
+    def manual_events(self, start_ts: float, end_ts: float) -> list[dict[str, Any]]:
+        return [
+            _row_to_dict(row)
+            for row in self.conn().execute(
+                "SELECT * FROM manual_events"
+                " WHERE start_ts < ? AND end_ts > ?"
+                " ORDER BY start_ts, id",
+                (end_ts, start_ts),
+            ).fetchall()
+        ]
+
+    def add_manual_event(
+        self,
+        start_ts: float,
+        end_ts: float,
+        note: str | None = None,
+        client: str | None = None,
+        project: str | None = None,
+        category: str | None = None,
+    ) -> int:
+        if end_ts <= start_ts:
+            raise ValueError("added time must end after it starts")
+        with self._write_lock:
+            cur = self._write(
+                "INSERT INTO manual_events"
+                " (start_ts, end_ts, note, client, project, category, created_ts)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    start_ts, end_ts, (note or "").strip() or None,
+                    client or None, project or None, category or None,
+                    time.time(),
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def delete_manual_event(self, manual_id: int) -> int:
+        with self._write_lock:
+            cur = self._write("DELETE FROM manual_events WHERE id = ?", (manual_id,))
+            return cur.rowcount or 0
 
     # -- assignments -----------------------------------------------------
 

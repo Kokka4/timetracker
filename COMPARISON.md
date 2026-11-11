@@ -130,7 +130,19 @@ risk is better than certifying it.
 
 ---
 
-## Two more, smaller but real
+## Three more, smaller but real
+
+**Time added by hand cannot double count.** Both tools let you add the hour
+you spent in a meeting room. The difference is what happens when the Mac
+recorded twenty minutes of that hour because you joined the call from your
+desk. In a tool that stores manual entries as entries, you now have a 60
+minute row and a 20 minute recording, and the day reads 80 minutes. It still
+adds up, every line is defensible, and the total is wrong, which is the worst
+of the three outcomes. Here an entry is a claim over a window rather than a
+recording: only the parts of the window with nothing in them are added, the
+day grows by 40, and the confirmation tells you it left 20 alone. Two
+overlapping claims behave the same way. It is a small feature that decides
+whether the number at the top of the page can be shown to anyone.
 
 **Everything destructive shows the figure and asks twice.** Deleting time,
 deleting a rule, unlabelling a client: each previews what it will affect,
@@ -157,10 +169,9 @@ DeskTime, and this tracker has none of it, on purpose.
 Zapier, and a public API. Against that, this has a CSV export and an HTML
 report.
 
-**Offline and manual time.** DeskTime syncs with Outlook and Google Calendar
-and lets you add time you spent away from the machine. This tracker only
-knows what happened on the Mac, so an in-person meeting is invisible to it.
-For anyone whose day includes real rooms, that is a genuine gap.
+**Calendar sync.** DeskTime reads Outlook and Google Calendar, so a meeting
+in the diary becomes tracked time without anyone typing it. Both tools let
+you add offline time by hand; only theirs can fill it in for you.
 
 **Projects.** They have project time tracking. Here the field exists in the
 schema and is not yet exposed.

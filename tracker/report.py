@@ -195,9 +195,11 @@ def render(
         None,
     )
 
+    added = summary.get("manual_seconds") or 0
     tiles = [
         ("Active time", _dur(total),
-         f"{_dur(total / days)} a day across {days} day{'s' if days != 1 else ''}"),
+         (f"{_dur(added)} of it added by hand" if added else
+          f"{_dur(total / days)} a day across {days} day{'s' if days != 1 else ''}")),
         ("Attributed to a client", _pct(summary.get("client_share")),
          f"{_dur(summary.get('client_seconds'))} of {_dur(total)}"),
         ("Biggest client", _e(top_client["key"]) if top_client else "—",
@@ -261,7 +263,9 @@ def render(
         "It has no account, no server and no way to report to anyone: every "
         "figure above was computed locally from a single file on this machine. "
         "Durations are time with an app in front of you, excluding anything "
-        "idle, locked or asleep."
+        "idle, locked or asleep. Time added by hand covers only the parts of "
+        "its window that had nothing recorded in them, so nothing here is "
+        "counted twice."
         "</footer></div></body></html>"
     )
     return "".join(parts)

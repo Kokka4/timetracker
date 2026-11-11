@@ -31,8 +31,16 @@ being tracked, not by the person installing it.
 | Whether a page was playing media | `true` | the extension |
 | Away periods, and which kind | `idle`, `locked`, `gap` | idle timer, lock state, sleep detection |
 | Labels you apply | client, project, category | you, through rules and assignments |
+| Time you add by hand | `14:00–15:00, "Hanval kickoff"` | you, on the Day page |
 
 That is the whole list. There is no other table and no other writer.
+
+The last row is the only one the Mac did not observe. Everything above it is
+a measurement; that one is something the person typed, because a tracker that
+watches a screen cannot see a meeting room. It is stored as a claim over a
+window rather than as recorded activity, and the two are never merged: the
+dashboard, the CSV and the report all keep the added figure separate from the
+measured one, so anyone reading the numbers can tell which is which.
 
 ### Never recorded, by construction
 
@@ -78,6 +86,10 @@ reassuring than a vague one:
   browser tab only counts while that browser is also frontmost.
 - Which means the total will be **lower** than the hours they were at their
   desk, and that is correct rather than a bug.
+- Work away from the Mac is invisible to all of the above, so it can be
+  **added by hand** on the Day page. That figure is kept separate from the
+  measured one everywhere it is shown, and an added window never overlaps
+  time that was recorded, so the day cannot count a minute twice.
 
 ---
 
@@ -319,6 +331,16 @@ Say this plainly — it is their machine and their data:
   can be given a category and a client on its own. That labels those minutes
   and nothing else; the extension offers a rule afterwards, as a separate
   question
+- **They can add work the Mac could not see.** A meeting room, a phone call,
+  a site visit. The Day page marks every gap of a quarter hour or more as
+  nothing recorded and offers to fill it, or **Add time** takes any window.
+  This is the answer to the first real objection anyone raises, so show it:
+  an automatic tracker that cannot account for the half of their week spent
+  away from the screen is one they will stop believing by Friday. Say how it
+  behaves, because it is unusual: it adds only the part of the window with
+  nothing already in it, so claiming an hour that overlaps twenty recorded
+  minutes grows the day by forty, not sixty, and it says so when it does. It
+  is also reported separately from recorded time everywhere it appears
 - **They can take their numbers out whenever they like.** The **Export**
   panel on the dashboard gives a CSV of every block, a self-contained HTML
   report, or that report printed to PDF with Cmd+P. The report file has no
@@ -504,6 +526,7 @@ Print this bit.
 [ ] Setup -> added their clients
 [ ] Showed them Unlabel, the undo for labelling the wrong thing in bulk
 [ ] Showed them how to remove non-work time from Through the day
+[ ] Day -> showed them a gap, and added one meeting into it with them
 [ ] Rules -> wrote one keyword rule with them and showed the preview
 [ ] Export -> opened a report so they know their data can leave on their terms
 [ ] Explained what is recorded, and how to stop it

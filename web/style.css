@@ -1623,3 +1623,191 @@ button.resume[hidden] { display: none; }
   .export-row label, .export-row select, .export-row input { width: 100%; }
   .export-actions button { flex: 1 1 auto; }
 }
+
+/* -- time the Mac could not see ------------------------------------------
+ *
+ * A row that was typed in has to look different from a row that was watched
+ * happen. Not louder, just distinguishable: the left edge carries it, so the
+ * list still scans as one column of times.
+ */
+
+.day-row.added { border-left: 3px solid var(--accent); padding-left: 9px; }
+.day-row.added .day-what b { font-style: italic; }
+
+/* A stretch with nothing in it is not an error, it is an invitation. */
+.day-row.gap {
+  background: repeating-linear-gradient(
+    135deg,
+    transparent, transparent 7px,
+    color-mix(in srgb, var(--ink-muted) 7%, transparent) 7px,
+    color-mix(in srgb, var(--ink-muted) 7%, transparent) 14px
+  );
+  border-bottom-style: dashed;
+}
+.day-row.gap .day-what { font-size: 12.5px; }
+
+.manual-what { margin-top: 10px; }
+.manual-what label { flex: 1 1 180px; min-width: 0; }
+.manual-what input { width: 100%; }
+#manual-go {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 550;
+  padding: 7px 15px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  cursor: pointer;
+}
+#manual-go:disabled { opacity: 0.5; cursor: default; }
+
+/* -- world clocks -------------------------------------------------------
+ *
+ * Every other block on this page is a white card. These are not: a card
+ * here would read as another panel of figures to work through, and the
+ * clocks are meant to be glanced at, not studied. So they are set directly
+ * on the sky, in the gutter the page already leaves empty.
+ *
+ * Each city carries a three-pixel sliver of its own sky as it is right now,
+ * which is the one ornament in the whole component and the reason the five
+ * of them read as one picture rather than five readouts. Colour is never
+ * the only signal: the night row also steps back in tone, and every
+ * offset is written out in words beside the time.
+ */
+
+#clocks {
+  --rail: 128px;
+  margin: 0 0 2px;
+
+  /* The page's muted tokens were drawn for ink on a white card. These sit
+     on the sky itself, which is several shades darker than a card, and
+     --ink-muted lands at 2.3:1 there. Mixing back towards --ink-1 keeps the
+     same hierarchy and clears 4.5:1, and because both ends are tokens it
+     follows the theme without a second set of dark-mode overrides. */
+  --clock-label: color-mix(in srgb, var(--ink-1) 80%, var(--ink-2));
+  --clock-dim: color-mix(in srgb, var(--ink-2) 80%, var(--ink-1));
+}
+
+.clocks-title {
+  margin: 0 0 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--ring);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--clock-dim);
+}
+
+.clocks-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+
+.clock {
+  display: grid;
+  grid-template-columns: 3px minmax(0, 1fr);
+  gap: 9px;
+  align-items: stretch;
+}
+
+/* The sky over that city at this moment. */
+.clock-sky {
+  border-radius: 2px;
+  background: var(--sky-now, var(--accent));
+}
+
+.clock-body { min-width: 0; }
+
+.clock-city {
+  display: block;
+  font-size: 11.5px;
+  line-height: 1.3;
+  color: var(--clock-label);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.clock-now {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.clock-time {
+  font-family: var(--mono);
+  font-size: 19px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+  color: var(--ink-1);
+  letter-spacing: -0.01em;
+}
+
+.clock-off,
+.clock-day {
+  font-size: 10.5px;
+  color: var(--clock-dim);
+  white-space: nowrap;
+}
+
+/* Home needs no offset from itself, so it gets the only mark in the list. */
+.clock.home .clock-city { color: var(--ink-1); font-weight: 600; }
+
+/* Asleep there. The obvious move is to fade the row, and it is the wrong
+   one: fading dark ink towards a pale sky collapses it to 2:1 long before
+   it looks faded. The night sky in the sliver beside it is signal enough,
+   and the name steps back one tone without losing a single point of
+   contrast. */
+.clock.night:not(.home) .clock-city { color: var(--clock-dim); font-weight: 400; }
+/* Home keeps its mark at three in the morning, when it is most wanted. */
+.clock.night.home .clock-city { color: var(--clock-dim); }
+
+/* Wide enough to hold the rail beside the page: out of the flow, into the
+   sky. Anchored to the centre rather than the viewport edge so it keeps its
+   distance from the content as the window grows. */
+@media (min-width: 1500px) {
+  #clocks {
+    position: fixed;
+    top: 104px;
+    right: calc(50% + 590px + 20px);
+    width: var(--rail);
+    margin: 0;
+    z-index: 2;
+  }
+}
+
+/* Too narrow for a rail: the same five cities lie down across the top. */
+@media (max-width: 1499px) {
+  .clocks-list {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 6px 26px;
+  }
+  .clock {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 5px;
+    padding-top: 7px;
+    border-top: 3px solid var(--sky-now, var(--accent));
+    min-width: 92px;
+  }
+  .clock-sky { display: none; }
+  .clocks-title {
+    border-bottom: 0;
+    padding-bottom: 0;
+    margin-bottom: 6px;
+  }
+}
+
+@media (max-width: 560px) {
+  .clocks-list { gap: 6px 18px; }
+  .clock-time { font-size: 17px; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .clock-time { transition: opacity 180ms ease; }
+}
