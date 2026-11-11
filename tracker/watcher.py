@@ -333,6 +333,34 @@ class Watcher(threading.Thread):
             self.store.touch_afk(self.open_afk["id"], end_ts)
         self.open_afk = None
 
+    # -- settling before someone edits history -------------------------------
+
+    def flush(self, end_ts: float | None = None) -> float:
+        """Close whatever is open, so the recorded day ends at `end_ts`.
+
+        The open event is not sitting in memory waiting to be written: it is
+        a row in the database already, extended on every tick. So deleting a
+        stretch of time that reaches the present would trim that row, and the
+        very next tick would call `touch_desktop_event` on the same id and
+        push its end back to now — quietly restoring the time just removed.
+        Closing first means the next tick opens a new row instead, and
+        nothing points at anything inside the window any more.
+
+        Returns the boundary it settled on, which the caller should treat as
+        the latest moment it may delete.
+        """
+        now = end_ts if end_ts is not None else time.time()
+        with self._lock:
+            self._close_event(now)
+            self._close_afk(now)
+            if self.ingest:
+                self.ingest.close_all(now)
+            # Away detection back-dates from the last input, so without a
+            # floor here the first idle stretch after an edit would reach
+            # back across the window and reinstate it as `idle`.
+            self.away_floor = max(self.away_floor, now)
+        return now
+
     # -- status -------------------------------------------------------------
 
     def status(self) -> dict[str, Any]:

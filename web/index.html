@@ -35,6 +35,7 @@
 
   <nav class="views" id="views" aria-label="Sections">
     <button data-view="dashboard" aria-current="page">Dashboard</button>
+    <button data-view="day">Day</button>
     <button data-view="setup">Setup</button>
     <button data-view="rules">Rules</button>
   </nav>
@@ -71,6 +72,10 @@
   </div>
 
   <div id="notices"></div>
+  <!-- Transient messages live apart from the status banners, because
+       renderNotices() rebuilds its own container on every poll and was
+       wiping them within a second of being shown. -->
+  <div id="flash" aria-live="polite"></div>
 
     <section class="view" data-view="dashboard">
   <nav class="ranges" id="ranges" role="tablist" aria-label="Date range">
@@ -94,8 +99,29 @@
     <div class="card-head">
       <h2>Through the day</h2>
       <span class="muted" id="timeline-note"></span>
+      <span class="spacer"></span>
+      <button class="ghost" id="remove-open"
+              title="Remove time that was not work">Remove time</button>
     </div>
     <div class="chart-host" id="timeline"></div>
+
+    <!-- One panel, two ways in: the button above opens it empty, and
+         clicking a block on the strip opens it filled with that block's
+         span. Either way you adjust the edges and read what will go before
+         anything happens. -->
+    <form class="remove-panel" id="remove-panel" hidden>
+      <div class="remove-row">
+        <label>Day <input type="date" id="remove-day" required></label>
+        <label>From <input type="time" id="remove-from" step="60" required></label>
+        <label>To <input type="time" id="remove-to" step="60" required></label>
+        <button type="button" class="ghost" id="remove-cancel">Cancel</button>
+      </div>
+      <p class="remove-preview" id="remove-preview"></p>
+      <div class="remove-actions">
+        <button type="submit" class="warn" id="remove-go" disabled>Delete this time</button>
+        <span class="muted" id="remove-note"></span>
+      </div>
+    </form>
   </section>
 
   <div class="grid">
@@ -127,6 +153,33 @@
   </section>
 
     </section>
+
+  <section class="view" data-view="day" hidden>
+    <div class="page-head">
+      <h2>One day, block by block</h2>
+      <p>Everything recorded, in order, with what it was called and where
+        that came from. Assign anything here and it applies to that stretch
+        of time only, without writing a rule.</p>
+    </div>
+
+    <section class="card">
+      <div class="card-head">
+        <div class="day-nav">
+          <button class="ghost icon" id="day-prev" aria-label="Previous day">&lsaquo;</button>
+          <input type="date" id="day-date">
+          <button class="ghost icon" id="day-next" aria-label="Next day">&rsaquo;</button>
+          <button class="ghost" id="day-today">Today</button>
+        </div>
+        <span class="spacer"></span>
+        <div class="seg" id="day-filter" role="tablist">
+          <button role="tab" aria-selected="true" data-filter="all">Everything</button>
+          <button role="tab" aria-selected="false" data-filter="unassigned">Unlabelled</button>
+        </div>
+      </div>
+      <p class="day-summary muted" id="day-summary"></p>
+      <div id="day-list"></div>
+    </section>
+  </section>
 
   <section class="view" data-view="setup" hidden>
     <div class="page-head">
@@ -184,6 +237,41 @@
         A site you have never labelled waits for you in the review queue.</p>
     </div>
 
+    <!-- A sentence you fill in, with the answer shown before you commit to
+         it. A rule rewrites the whole history the moment it is saved, so a
+         keyword one letter too short quietly reassigns a month. -->
+    <section class="card" id="rule-builder">
+      <div class="card-head"><h2>Add a rule</h2></div>
+      <div class="builder">
+        <span class="builder-word">When</span>
+        <select id="rb-field" aria-label="What to look at">
+          <option value="any">anything</option>
+          <option value="url">the web address</option>
+          <option value="domain">the site</option>
+          <option value="title">the window or file name</option>
+          <option value="app">the app</option>
+        </select>
+        <span class="builder-word">contains</span>
+        <input type="text" id="rb-text" placeholder="keyword" autocomplete="off"
+               spellcheck="false">
+        <span class="builder-word">call it</span>
+        <input type="text" id="rb-category" list="known-categories"
+               placeholder="category" autocomplete="off">
+        <span class="builder-word">for</span>
+        <input type="text" id="rb-client" list="known-clients"
+               placeholder="client" autocomplete="off">
+      </div>
+      <label class="builder-advanced">
+        <input type="checkbox" id="rb-regex">
+        Treat what I typed as a pattern, not a phrase
+      </label>
+      <div class="rb-preview" id="rb-preview"></div>
+      <div class="rb-actions">
+        <button class="primary" id="rb-add" disabled>Add this rule</button>
+        <span class="muted" id="rb-note"></span>
+      </div>
+    </section>
+
     <section class="card">
       <div class="card-head">
         <h2>All rules <span class="muted" id="rule-count"></span></h2>
@@ -197,11 +285,52 @@
           <button data-source="pack">Packs</button>
         </div>
       </div>
+      <div class="dead-rules" id="dead-rules" hidden></div>
       <div id="rules"></div>
     </section>
   </section>
 
-<footer>
+<!-- Taking your own numbers out is not an afterthought on a tool whose
+     whole premise is that the data is yours, so it is a panel rather than a
+     link. The PDF path is the browser's own print engine: a page built for
+     print goes through it at better quality than a few hundred lines of
+     stdlib could manage, and it keeps the install free of dependencies. -->
+  <section class="card" id="export-card">
+    <div class="card-head">
+      <h2>Export</h2>
+      <span class="muted">Your data, in a form you can keep or send.</span>
+    </div>
+    <div class="export-row">
+      <label>Range
+        <select id="export-range">
+          <option value="today">Today</option>
+          <option value="yesterday">Yesterday</option>
+          <option value="week" selected>Last 7 days</option>
+          <option value="this_month">This month</option>
+          <option value="month">Last 30 days</option>
+          <option value="custom">Between two dates…</option>
+        </select>
+      </label>
+      <label class="export-dates" id="export-from-wrap" hidden>From
+        <input type="date" id="export-from">
+      </label>
+      <label class="export-dates" id="export-to-wrap" hidden>To
+        <input type="date" id="export-to">
+      </label>
+      <label class="export-detail">
+        <input type="checkbox" id="export-detail">
+        Include every block
+      </label>
+    </div>
+    <div class="export-actions">
+      <button class="primary" id="export-report">Open report</button>
+      <button class="ghost" id="export-print">Report as PDF</button>
+      <button class="ghost" id="export-csv">Download CSV</button>
+      <span class="muted" id="export-note"></span>
+    </div>
+  </section>
+
+  <footer>
     <span id="db-line"></span>
     <span class="spacer"></span>
     <a id="export-link" href="/api/export.csv?range=week" download>Export this range as CSV</a>

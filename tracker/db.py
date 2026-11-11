@@ -67,6 +67,8 @@ CREATE TABLE IF NOT EXISTS rules (
     match_title  TEXT,
     match_domain TEXT,
     match_url    TEXT,
+    match_any    TEXT,
+    match_mode   TEXT NOT NULL DEFAULT 'regex',
     client       TEXT,
     project      TEXT,
     category     TEXT,
@@ -107,6 +109,28 @@ CREATE TABLE IF NOT EXISTS clients (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_name
     ON clients(name COLLATE NOCASE);
+
+-- A label put directly on a stretch of time, rather than on a pattern.
+--
+-- A rule says "anything matching this is Hanval". An assignment says "that
+-- hour was Hanval" and claims nothing about anything else. Both exist
+-- because they answer different questions: the first is how you stop doing
+-- the work twice, the second is how you record the afternoon that does not
+-- resemble any other afternoon. Assignments are read after rules and win,
+-- field by field, so assigning a client to a block keeps whatever category
+-- the rules worked out.
+CREATE TABLE IF NOT EXISTS assignments (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    start_ts   REAL NOT NULL,
+    end_ts     REAL NOT NULL,
+    client     TEXT,
+    project    TEXT,
+    category   TEXT,
+    source     TEXT NOT NULL DEFAULT 'user',
+    created_ts REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_assign_start ON assignments(start_ts);
+CREATE INDEX IF NOT EXISTS idx_assign_end   ON assignments(end_ts);
 """
 
 
@@ -147,6 +171,20 @@ class Store:
             conn.execute(
                 "ALTER TABLE rules ADD COLUMN source TEXT NOT NULL DEFAULT 'user'"
             )
+        if "match_any" not in have:
+            # One pattern checked against the app, the window title, the
+            # domain and the address, matching if ANY of them matches. The
+            # four columns above AND together, which is right for "this app,
+            # with this title" and useless for "anything mentioning Hanval".
+            conn.execute("ALTER TABLE rules ADD COLUMN match_any TEXT")
+        if "match_mode" not in have:
+            # 'text' means the pattern is a phrase and is escaped before it
+            # is compiled; 'regex' means it is a pattern and is not. Stored
+            # rather than guessed, because guessing is how `C++` becomes an
+            # invalid rule that fails silently.
+            conn.execute(
+                "ALTER TABLE rules ADD COLUMN match_mode TEXT NOT NULL DEFAULT 'regex'"
+            )
 
     def backup_to(self, target: Path) -> Path:
         """A real snapshot, taken through SQLite rather than by copying bytes.
@@ -162,6 +200,46 @@ class Store:
                 self.conn().backup(destination)
             finally:
                 destination.close()
+        return target
+
+    # Deleting time is the one thing here that cannot be undone, so it is the
+    # one thing that always leaves a way back.
+    #
+    # The snapshot worth having is the state before you *started* correcting
+    # the day, not the state before the last of six clicks. So a burst shares
+    # one: a new snapshot is taken only when the most recent is older than
+    # `settle_seconds`. Five are kept, which is five sessions of corrections
+    # rather than the last five clicks of one.
+    def backup_before_delete(
+        self, settle_seconds: float = 600.0, keep: int = 5
+    ) -> Path | None:
+        folder = self.path.parent / "backups"
+        folder.mkdir(parents=True, exist_ok=True)
+        existing = sorted(
+            folder.glob("before-delete-*.db"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if existing:
+            age = time.time() - existing[0].stat().st_mtime
+            if age < settle_seconds:
+                return existing[0]
+
+        # Seconds are not fine enough on their own: two corrections inside
+        # the same second would write the same filename, and the second would
+        # overwrite the only copy of the state the first was protecting.
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        candidate = folder / f"before-delete-{stamp}.db"
+        suffix = 1
+        while candidate.exists():
+            candidate = folder / f"before-delete-{stamp}-{suffix}.db"
+            suffix += 1
+        target = self.backup_to(candidate)
+        for old in existing[keep - 1:]:
+            try:
+                old.unlink()
+            except OSError:
+                pass
         return target
 
     # -- connection ------------------------------------------------------
@@ -365,18 +443,33 @@ class Store:
         sql += " ORDER BY priority ASC, id ASC"
         return [_row_to_dict(r) for r in self.conn().execute(sql).fetchall()]
 
+    # Patterns the rule could match on. A rule with none of them is not a
+    # permissive rule, it is a dead one: `compile_rules` drops it, so it
+    # classifies nothing and sits in the list looking like a rule that simply
+    # has not been reached yet. Eleven of those turned up in a real database.
+    MATCH_FIELDS = ("match_app", "match_title", "match_domain", "match_url",
+                    "match_any")
+
     def add_rule(self, rule: dict[str, Any]) -> int:
+        # Checked here rather than only at the HTTP layer, because an
+        # invariant enforced by every caller separately is one that a new
+        # caller will forget, and the failure is silent by construction.
+        if not any(rule.get(field) for field in self.MATCH_FIELDS):
+            raise ValueError("a rule with no pattern would match nothing")
         cur = self._write(
             "INSERT INTO rules"
             " (priority, match_app, match_title, match_domain, match_url,"
-            "  client, project, category, enabled, created_ts, source)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "  match_any, match_mode, client, project, category, enabled,"
+            "  created_ts, source)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 int(rule.get("priority") or 100),
                 rule.get("match_app") or None,
                 rule.get("match_title") or None,
                 rule.get("match_domain") or None,
                 rule.get("match_url") or None,
+                rule.get("match_any") or None,
+                "text" if str(rule.get("match_mode") or "regex") == "text" else "regex",
                 rule.get("client") or None,
                 rule.get("project") or None,
                 rule.get("category") or None,
@@ -386,6 +479,22 @@ class Store:
             ),
         )
         return int(cur.lastrowid)
+
+    def dead_rules(self) -> list[dict[str, Any]]:
+        """Rules that can never match, because they carry no pattern."""
+        where = " AND ".join(f"({f} IS NULL OR {f} = '')" for f in self.MATCH_FIELDS)
+        return [
+            _row_to_dict(row)
+            for row in self.conn().execute(
+                f"SELECT * FROM rules WHERE {where} ORDER BY id"
+            ).fetchall()
+        ]
+
+    def delete_dead_rules(self) -> int:
+        where = " AND ".join(f"({f} IS NULL OR {f} = '')" for f in self.MATCH_FIELDS)
+        with self._write_lock:
+            cur = self._write(f"DELETE FROM rules WHERE {where}")
+            return cur.rowcount or 0
 
     def delete_rules_by_source(self, source: str) -> int:
         cur = self._write("DELETE FROM rules WHERE source = ?", (source,))
@@ -540,6 +649,78 @@ class Store:
                 ).fetchone()
             )
 
+    # -- assignments -----------------------------------------------------
+
+    def assignments(self, start_ts: float, end_ts: float) -> list[dict[str, Any]]:
+        """Every assignment overlapping the window, earliest first."""
+        return [
+            _row_to_dict(row)
+            for row in self.conn().execute(
+                "SELECT * FROM assignments"
+                " WHERE start_ts < ? AND end_ts > ?"
+                " ORDER BY start_ts, id",
+                (end_ts, start_ts),
+            ).fetchall()
+        ]
+
+    def add_assignment(
+        self,
+        start_ts: float,
+        end_ts: float,
+        client: str | None = None,
+        project: str | None = None,
+        category: str | None = None,
+        source: str = "user",
+    ) -> int:
+        """Label a stretch of time directly.
+
+        Replaces whatever it covers rather than stacking on top: assigning
+        the same block twice is a correction, not a second opinion, and two
+        rows claiming the same minute would make the winner depend on insert
+        order.
+        """
+        if end_ts <= start_ts:
+            raise ValueError("an assignment must end after it starts")
+        with self._write_lock:
+            conn = self.conn()
+            with conn:
+                conn.execute(
+                    "DELETE FROM assignments WHERE start_ts >= ? AND end_ts <= ?",
+                    (start_ts, end_ts),
+                )
+                # Trim the ones that merely overlap, so no minute is claimed
+                # twice and no earlier assignment is silently discarded.
+                conn.execute(
+                    "UPDATE assignments SET end_ts = ?"
+                    " WHERE start_ts < ? AND end_ts > ? AND end_ts <= ?",
+                    (start_ts, start_ts, start_ts, end_ts),
+                )
+                conn.execute(
+                    "UPDATE assignments SET start_ts = ?"
+                    " WHERE start_ts >= ? AND start_ts < ? AND end_ts > ?",
+                    (end_ts, start_ts, end_ts, end_ts),
+                )
+                cur = conn.execute(
+                    "INSERT INTO assignments"
+                    " (start_ts, end_ts, client, project, category, source, created_ts)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        start_ts, end_ts,
+                        client or None, project or None, category or None,
+                        source, time.time(),
+                    ),
+                )
+                return int(cur.lastrowid)
+
+    def clear_assignments(self, start_ts: float, end_ts: float) -> int:
+        """Put a stretch of time back to whatever the rules make of it."""
+        with self._write_lock:
+            cur = self._write(
+                "DELETE FROM assignments WHERE start_ts < ? AND end_ts > ?",
+                (end_ts, start_ts),
+            )
+            return cur.rowcount or 0
+
     def _release(self, field: str, name: str) -> dict[str, Any]:
         """Take a name off every rule that assigns it.
 
@@ -549,8 +730,13 @@ class Store:
         say and goes; a rule that also sets the other field keeps it, with
         the released half cleared.
 
-        Nothing recorded is touched. Classification is computed from the
-        rules when you look, so the history simply stops claiming this name.
+        Nothing recorded is touched. Classification is computed when you
+        look, so the history simply stops claiming this name.
+
+        Assignments carry the same names as rules and have to be released
+        too. Clearing the rules alone would leave every block somebody
+        assigned by hand still saying "Me", which is exactly the state this
+        is meant to undo.
         """
         if field not in ("client", "category"):
             raise ValueError(f"cannot release {field!r}")
@@ -563,10 +749,20 @@ class Store:
                 "DELETE FROM rules WHERE client IS NULL AND project IS NULL"
                 " AND category IS NULL"
             )
+            unassigned = self._write(
+                f"UPDATE assignments SET {field} = NULL"
+                f" WHERE {field} = ? COLLATE NOCASE",
+                (name,),
+            )
+            self._write(
+                "DELETE FROM assignments WHERE client IS NULL AND project IS NULL"
+                " AND category IS NULL"
+            )
             return {
                 "name": name,
                 "rules_cleared": cleared.rowcount or 0,
                 "rules_removed": emptied.rowcount or 0,
+                "blocks_cleared": unassigned.rowcount or 0,
             }
 
     def unassign_category(self, category_id: int) -> dict[str, Any]:
@@ -742,3 +938,163 @@ class Store:
                 cur = conn.execute(f"DELETE FROM {table} WHERE end_ts < ?", (ts,))
                 removed += cur.rowcount or 0
         return removed
+
+    # -- removing a stretch of time --------------------------------------
+
+    # An event is an interval [start_ts, end_ts]. Against a deletion window
+    # [a, b] there are five arrangements, and only the first leaves it alone:
+    #
+    #   outside    |--e--|                     a=====b
+    #   inside               a===|--e--|===b           drop it
+    #   head            |--e--|=====b                  clip the end back to a
+    #   tail                 a=====|--e--|             clip the start up to b
+    #   spanning   |--e-------a=====b-------|          keep both ends, drop
+    #                                                  the middle: one event
+    #                                                  becomes two
+    #
+    # Spanning is the case that is easy to miss and impossible to notice
+    # afterwards, because the arithmetic still adds up — the day simply keeps
+    # time you asked it to remove.
+    #
+    # Interaction counts cannot be placed in time: all the row records is how
+    # many happened across the whole event. Every trim apportions them by the
+    # share of the event that survives, which is the same thing analytics
+    # already does when it splits a tab across a block. It conserves the total
+    # and never invents activity.
+
+    _COUNTERS = ("keys", "clicks", "scrolls", "media")
+
+    def _scale(self, table: str, kept: str) -> str:
+        """SET clauses that shrink the interaction counters along with the row.
+
+        `kept` is an SQL expression for the surviving duration.
+        """
+        if table != "browser_events":
+            return ""
+        return "".join(
+            f", {c} = CAST({c} * ({kept}) / duration AS INTEGER)"
+            for c in self._COUNTERS
+        )
+
+    def removable_seconds(self, start_ts: float, end_ts: float) -> float:
+        """How much recorded time lies inside the window, before touching it."""
+        if end_ts <= start_ts:
+            return 0.0
+        total = 0.0
+        conn = self.conn()
+        for table in ("desktop_events", "browser_events"):
+            row = conn.execute(
+                f"SELECT COALESCE(SUM(MIN(end_ts, ?) - MAX(start_ts, ?)), 0) AS s"
+                f" FROM {table} WHERE start_ts < ? AND end_ts > ?",
+                (end_ts, start_ts, end_ts, start_ts),
+            ).fetchone()
+            total += float(row["s"] or 0.0)
+        return total
+
+    def delete_range(self, start_ts: float, end_ts: float) -> dict[str, Any]:
+        """Remove every recorded second between `start_ts` and `end_ts`.
+
+        Events are trimmed rather than dropped wholesale, so deleting an hour
+        out of the middle of an afternoon costs exactly that hour. Nothing
+        outside the window moves.
+        """
+        if end_ts <= start_ts:
+            return {"seconds": 0.0, "deleted": 0, "clipped": 0, "split": 0}
+
+        seconds = self.removable_seconds(start_ts, end_ts)
+        deleted = clipped = split = 0
+        a, b = start_ts, end_ts
+
+        with self._write_lock:
+            conn = self.conn()
+            with conn:  # one transaction: a half-applied delete is not a state
+                # Assignments are labels on time. When the time goes, so do
+                # they: an assignment left over a window with nothing in it
+                # would reattach itself to whatever was recorded there next.
+                conn.execute(
+                    "DELETE FROM assignments WHERE start_ts >= ? AND end_ts <= ?",
+                    (a, b),
+                )
+                conn.execute(
+                    "UPDATE assignments SET end_ts = ?"
+                    " WHERE start_ts < ? AND end_ts > ? AND end_ts <= ?",
+                    (a, a, a, b),
+                )
+                conn.execute(
+                    "UPDATE assignments SET start_ts = ?"
+                    " WHERE start_ts >= ? AND start_ts < ? AND end_ts > ?",
+                    (b, a, b, b),
+                )
+
+                for table in ("desktop_events", "browser_events", "afk"):
+                    if table == "desktop_events":
+                        cols = "app, bundle_id, title"
+                        extra = ""
+                    elif table == "browser_events":
+                        cols = "browser, domain, url, title, tab_id"
+                        extra = "".join(
+                            f", CAST({c} * (end_ts - ?) / duration AS INTEGER)"
+                            for c in self._COUNTERS
+                        )
+                        cols += ", keys, clicks, scrolls, media"
+                    else:
+                        cols = "kind"
+                        extra = ""
+
+                    # The far half of a spanning event, created before
+                    # anything is clipped — afterwards there is nothing left
+                    # to split.
+                    insert_cols = cols.split(", ")
+                    select_cols = [c for c in insert_cols if c not in self._COUNTERS]
+                    cur = conn.execute(
+                        f"INSERT INTO {table}"
+                        f" (start_ts, end_ts, duration, {', '.join(insert_cols)})"
+                        f" SELECT ?, end_ts, end_ts - ?, {', '.join(select_cols)}{extra}"
+                        f" FROM {table}"
+                        f" WHERE start_ts < ? AND end_ts > ? AND duration > 0",
+                        (b, b) + (b,) * (len(self._COUNTERS) if extra else 0) + (a, b),
+                    )
+                    split += cur.rowcount or 0
+
+                    # Heads: began before the window, ran into it. Keep the
+                    # part before.
+                    cur = conn.execute(
+                        f"UPDATE {table}"
+                        f" SET end_ts = ?, duration = ? - start_ts"
+                        f"{self._scale(table, '? - start_ts')}"
+                        f" WHERE start_ts < ? AND end_ts > ? AND duration > 0",
+                        (a, a) + ((a,) * len(self._COUNTERS) if table == "browser_events" else ())
+                        + (a, a),
+                    )
+                    clipped += cur.rowcount or 0
+
+                    # Tails: still running when the window ended. Keep the
+                    # part after. The halves inserted above already start at
+                    # b, so they do not match.
+                    cur = conn.execute(
+                        f"UPDATE {table}"
+                        f" SET start_ts = ?, duration = end_ts - ?"
+                        f"{self._scale(table, 'end_ts - ?')}"
+                        f" WHERE start_ts >= ? AND start_ts < ? AND end_ts > ? AND duration > 0",
+                        (b, b) + ((b,) * len(self._COUNTERS) if table == "browser_events" else ())
+                        + (a, b, b),
+                    )
+                    clipped += cur.rowcount or 0
+
+                    # Whatever still lies inside the window was entirely
+                    # inside it.
+                    cur = conn.execute(
+                        f"DELETE FROM {table} WHERE start_ts >= ? AND end_ts <= ?",
+                        (a, b),
+                    )
+                    deleted += cur.rowcount or 0
+
+        # A spanning event is trimmed at its head as well as split, so it
+        # lands in both tallies. Reporting it twice would make the numbers
+        # add up to more events than the window ever held.
+        return {
+            "seconds": seconds,
+            "deleted": deleted,
+            "clipped": max(0, clipped - split),
+            "split": split,
+        }

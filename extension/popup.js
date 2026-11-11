@@ -286,41 +286,132 @@ async function doResume() {
   await paint();
 }
 
-async function labelCurrent() {
+/* What was just assigned, held so the rule offer can name it and reuse it
+   without reading the inputs again — they are cleared the moment the
+   assignment lands. */
+let lastAssigned = null;
+
+async function assignCurrent() {
   if (!current) return;
   const client = $("client").value.trim();
   const category = $("category").value.trim();
   if (!client && !category) {
-    $("client").focus();
+    $("category").focus();
     return;
   }
+
+  // The visit so far, which is the time this label is actually about. What
+  // happens next is the rule's business, not the assignment's.
+  const now = Date.now() / 1000;
+  const start = now - Math.max(1, current.seconds || 1);
+
   busy(true);
   $("label").textContent = "…";
   try {
-    const result = await api("/api/label", {
+    const result = await api("/api/assign", {
+      start,
+      end: now,
+      client: client || null,
+      category: category || null,
+    });
+    const made = result.created || {};
+    const extra = made.client ? ` ${made.client} is a new client.` : "";
+    $("flash").textContent = `Assigned ${fmt(now - start)}.${extra}`;
+    lastAssigned = {
+      client: client || null,
+      category: category || null,
       signature: {
         app: current.app,
         domain: current.domain,
         title: current.title,
         url: current.url,
       },
-      client: client || null,
-      category: category || null,
-      scope: $("scope").value,
-    });
-    const made = result.created || {};
-    const extra = made.client ? ` · added ${made.client} as a client` : "";
-    $("flash").textContent = `Labelled${extra}. Every matching block follows.`;
+      where: current.url || current.domain || current.app,
+    };
     $("client").value = "";
     $("category").value = "";
-    setTimeout(() => { $("flash").textContent = ""; }, 4000);
+    offerRule();
     await paint();
   } catch (error) {
     $("flash").innerHTML = `<span class="err">${error.message}</span>`;
   } finally {
     busy(false);
-    $("label").textContent = "Label this";
+    $("label").textContent = "Assign this time";
   }
+}
+
+function offerRule() {
+  if (!lastAssigned) return;
+  const where = lastAssigned.where || "this page";
+  const out = clearNode($("offer-text"));
+  out.appendChild(document.createTextNode("Next time you are on "));
+  out.appendChild(el("b", trim(where, 48)));
+  out.appendChild(document.createTextNode(", call it "));
+  // "Outreach ops · Hanval Metall" makes the reader work out what the dot
+  // means. The sentence says it.
+  if (lastAssigned.category && lastAssigned.client) {
+    out.appendChild(el("b", lastAssigned.category));
+    out.appendChild(document.createTextNode(" for "));
+    out.appendChild(el("b", lastAssigned.client));
+  } else {
+    out.appendChild(el("b", lastAssigned.category || lastAssigned.client));
+  }
+  out.appendChild(document.createTextNode(" automatically?"));
+  $("offer-flash").textContent = "";
+  $("rule-offer").hidden = false;
+}
+
+function dismissRule() {
+  $("rule-offer").hidden = true;
+  lastAssigned = null;
+}
+
+async function makeRule() {
+  if (!lastAssigned) return;
+  busy(true);
+  $("make-rule").textContent = "…";
+  try {
+    await api("/api/label", {
+      signature: lastAssigned.signature,
+      client: lastAssigned.client,
+      category: lastAssigned.category,
+      scope: $("scope").value,
+    });
+    $("offer-flash").textContent = "Rule made. Matching time follows it from now on.";
+    setTimeout(dismissRule, 2500);
+    await paint();
+  } catch (error) {
+    $("offer-flash").innerHTML = `<span class="err">${error.message}</span>`;
+  } finally {
+    busy(false);
+    $("make-rule").textContent = "Make the rule";
+  }
+}
+
+function clearNode(node) {
+  while (node.firstChild) node.removeChild(node.firstChild);
+  return node;
+}
+
+function el(tag, text) {
+  const node = document.createElement(tag);
+  node.textContent = text;
+  return node;
+}
+
+function trim(text, max) {
+  const value = String(text || "");
+  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+}
+
+function fmt(seconds) {
+  const total = Math.max(1, Math.round(seconds));
+  if (total < 60) return `${total}s`;
+  const minutes = Math.round(total / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest ? `${hours}h ${rest}m` : `${hours}h`;
 }
 
 /* -- wiring ------------------------------------------------------------- */
@@ -338,11 +429,13 @@ $("pause-row").addEventListener("click", (event) => {
 });
 
 $("resume").addEventListener("click", doResume);
-$("label").addEventListener("click", labelCurrent);
+$("label").addEventListener("click", assignCurrent);
+$("make-rule").addEventListener("click", makeRule);
+$("no-rule").addEventListener("click", dismissRule);
 
-for (const id of ["client", "category"]) {
+for (const id of ["category", "client"]) {
   $(id).addEventListener("keydown", (event) => {
-    if (event.key === "Enter") labelCurrent();
+    if (event.key === "Enter") assignCurrent();
   });
 }
 

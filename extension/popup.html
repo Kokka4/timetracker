@@ -216,6 +216,42 @@
   }
   .ok-flash:empty { display: none; }
 
+  /* The second step. It appears only after something has been assigned, and
+     it is the one place in the popup that asks rather than tells, so it is
+     set apart from the card above it rather than continuing it. */
+  .rule-offer {
+    margin-top: 13px;
+    padding: 12px 12px 13px;
+    border: 1px solid var(--line);
+    border-radius: var(--r2);
+    background: var(--card-2);
+  }
+  .rule-offer[hidden] { display: none; }
+  .offer-text {
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--ink-2);
+  }
+  .offer-text b { color: var(--ink); font-weight: 600; }
+  .rule-offer select { margin-top: 10px; width: 100%; }
+  .offer-actions {
+    display: flex;
+    gap: 7px;
+    margin-top: 10px;
+  }
+  .offer-actions .primary { flex: 1; }
+  .quiet {
+    font: inherit;
+    font-size: 12px;
+    padding: 0 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--ink-2);
+    cursor: pointer;
+  }
+  .quiet:hover { color: var(--ink); border-color: var(--muted); }
+
   .note {
     margin-top: 15px;
     padding-top: 12px;
@@ -272,12 +308,26 @@
 
     <div class="label-block" id="label-block">
       <div class="fields">
-        <input type="text" id="client" list="clients" placeholder="client" autocomplete="off">
         <input type="text" id="category" list="categories" placeholder="category" autocomplete="off">
+        <input type="text" id="client" list="clients" placeholder="client" autocomplete="off">
       </div>
-      <select id="scope" aria-label="How far this label should reach"></select>
-      <button class="primary wide" id="label">Label this</button>
+      <button class="primary wide" id="label">Assign this time</button>
       <div class="ok-flash" id="flash"></div>
+    </div>
+
+    <!-- Assigning and rule-making used to be the same press, which meant
+         labelling one afternoon quietly changed how every future afternoon
+         was read. They are two steps now: the time is assigned, and then
+         you are asked, with the page and the labels named, whether it
+         should happen again by itself. -->
+    <div class="rule-offer" id="rule-offer" hidden>
+      <div class="offer-text" id="offer-text"></div>
+      <select id="scope" aria-label="How far the rule should reach"></select>
+      <div class="offer-actions">
+        <button class="primary" id="make-rule">Make the rule</button>
+        <button class="quiet" id="no-rule">Just this once</button>
+      </div>
+      <div class="ok-flash" id="offer-flash"></div>
     </div>
   </div>
 

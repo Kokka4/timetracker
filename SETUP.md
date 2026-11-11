@@ -11,6 +11,76 @@ Everything stays on that Mac. No account, no server, no data leaves the laptop.
 
 ---
 
+## What this records, exactly
+
+The question every person asks, answered in full before anything is
+installed. Hand them this section; it is written to be read by the person
+being tracked, not by the person installing it.
+
+### Written to the database
+
+| What | Example | Where it comes from |
+|---|---|---|
+| Which app is frontmost, and for how long | `Cursor`, 23 minutes | sampled every 5 seconds |
+| Its bundle id | `com.todesktop.230313mzl4w4u92` | same sample |
+| The window title | `timetracker — app.js` | only with Accessibility granted |
+| Which browser tab is in front, and for how long | `app.instantly.ai`, 4 minutes | the Chrome extension |
+| The page URL | `app.instantly.ai/campaigns` | the extension, query string stripped |
+| The page title | `Campaigns · Instantly` | the extension |
+| How many keystrokes, clicks and scrolls happened on a page | `412, 60, 19` | the extension, counts only |
+| Whether a page was playing media | `true` | the extension |
+| Away periods, and which kind | `idle`, `locked`, `gap` | idle timer, lock state, sleep detection |
+| Labels you apply | client, project, category | you, through rules and assignments |
+
+That is the whole list. There is no other table and no other writer.
+
+### Never recorded, by construction
+
+- **What you typed.** The content script counts keystrokes and never reads
+  them. Four integers and a boolean are all that leave a page.
+- **Page content.** No text, no HTML, no form values, no clipboard.
+- **Screenshots.** There is no screenshot code in this project. Not disabled
+  by a setting, not off by default: absent.
+- **The screen, the camera, the microphone.** Nothing is captured.
+- **Your location.** Nothing reads it, and no IP address is stored.
+- **Incognito windows.** The extension does not report them at all.
+- **Anything at all while paused.** Not even the fact of the pause.
+- **Excluded apps' titles.** They are timed, but their window titles are
+  never written. 1Password and similar are excluded out of the box.
+- **Excluded sites.** Not recorded in any form.
+- **Query strings.** Stripped from URLs by default, because they carry search
+  terms and session tokens.
+
+### Where it goes
+
+Nowhere. One SQLite file at `~/timetracker/data/tracker.db`, on the Mac that
+recorded it.
+
+- The HTTP server binds to `127.0.0.1`, which is never routed onto a network.
+  A colleague on the same wifi reaches their own machine, not yours.
+- The dashboard loads no fonts, scripts or stylesheets from the internet.
+- No code in the project makes an outbound request. There is no telemetry, no
+  sync, no account and no update ping.
+- The tool has no mechanism to send a figure to anyone, including whoever
+  installed it. If numbers are wanted from it, the person exports them and
+  sends them deliberately.
+
+### What it means for accuracy
+
+Worth saying while you are standing there, because the honest answer is more
+reassuring than a vague one:
+
+- Time counts only while you are **actually at the machine**. Three minutes
+  of no input and it stops, and it back-dates the stop, so a coffee break
+  does not get credited to whatever was on screen.
+- A **locked screen** and a **sleeping Mac** are away time, not work.
+- Background apps count for nothing. Only the frontmost one is timed, and a
+  browser tab only counts while that browser is also frontmost.
+- Which means the total will be **lower** than the hours they were at their
+  desk, and that is correct rather than a bug.
+
+---
+
 ## 0. Before you walk over
 
 Have ready:
@@ -239,6 +309,22 @@ Say this plainly — it is their machine and their data:
   until they turn it back on. Nothing is recorded while it is off, not even
   the fact that it was off
 - They can stop it for good at any time: `cd ~/timetracker && ./uninstall.sh`
+- **They can delete time that was not work.** On the dashboard, under
+  **Through the day**, clicking any block opens a panel filled with that
+  block's span; **Remove time** lets them type a window instead. It shows
+  what is in the window first, and takes two presses. The database is
+  snapshotted to `data/backups/` before the first deletion of a session, so
+  a wrong window is recoverable
+- **Day** on the top bar is every block of one day as a list, where each one
+  can be given a category and a client on its own. That labels those minutes
+  and nothing else; the extension offers a rule afterwards, as a separate
+  question
+- **They can take their numbers out whenever they like.** The **Export**
+  panel on the dashboard gives a CSV of every block, a self-contained HTML
+  report, or that report printed to PDF with Cmd+P. The report file has no
+  scripts and fetches nothing, so it still opens in a year on a machine that
+  never had the tracker. This is the only way data leaves the Mac, and they
+  are the one doing it
 - Deleting everything recorded: `./reset.sh`
 
 Show them the Pause button before you leave, and watch them use it once. It is
@@ -247,7 +333,8 @@ switch off is one they quietly uninstall instead.
 
 ### Then spend two minutes in Setup
 
-The top bar has three pages: **Dashboard**, **Setup** and **Rules**. Setup is
+The top bar has four pages: **Dashboard**, **Day**, **Setup** and
+**Rules**. Setup is
 what makes it their tracker rather than yours. Open it and do three things
 with them:
 
@@ -262,6 +349,28 @@ with them:
 Out of the box everyone gets seven neutral categories (Email, Meetings, Comms,
 Docs, AI & research, Admin, Break) matched on things every Mac has. Nobody
 inherits anybody else's job.
+
+### Show them the one-sentence rule
+
+On **Rules** there is a sentence to fill in:
+
+> When **anything** contains **keyword** call it **category** for **client**
+
+This is the thing that turns a week of manual labelling into one line. If
+their biggest client is called Hanval, typing `Hanval` and the client name
+attributes every file, window, document and URL mentioning it, backwards
+through everything already recorded and forwards from now on.
+
+Two things to point out while they try it:
+
+- As they type, it says what the rule would claim: *8h 38m across 38 blocks
+  this month, 13% of everything recorded*, and lists six real blocks. If the
+  keyword is wide enough to take time that already belongs to another client,
+  it names them first. The rule is not written until they press the button.
+- Tell them to set the **client** and leave the category alone. Their own
+  rules outrank the starter ones, so putting a category on a keyword rule
+  flattens every block for that client into one kind of work and hides that
+  it was 60% meetings.
 
 **Rules** is the third page: every match the tracker has learned, where each
 one came from, and a search box. Rules are read when you look, not when the
@@ -394,5 +503,8 @@ Print this bit.
 [ ] Setup -> turned on the pack that matches their work
 [ ] Setup -> added their clients
 [ ] Showed them Unlabel, the undo for labelling the wrong thing in bulk
+[ ] Showed them how to remove non-work time from Through the day
+[ ] Rules -> wrote one keyword rule with them and showed the preview
+[ ] Export -> opened a report so they know their data can leave on their terms
 [ ] Explained what is recorded, and how to stop it
 ```

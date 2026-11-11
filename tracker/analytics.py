@@ -38,15 +38,25 @@ def _parse_day(text: str | None) -> date | None:
 
 
 def resolve_range(
-    name: str = "today",
+    name: str | None = None,
     frm: str | None = None,
     to: str | None = None,
     now: float | None = None,
+    default: str = "today",
 ) -> dict[str, Any]:
-    """Turn a range name into concrete local-time boundaries."""
+    """Turn a range name into concrete local-time boundaries.
+
+    Dates imply a custom range. `from` and `to` used to be read only when the
+    name was literally "custom", so every caller that passed two dates and no
+    name got the default window back and no indication that its dates had
+    been dropped. Anything asking for two specific days means a custom range;
+    making it say so twice is a trap, not a safeguard.
+    """
     now = now if now is not None else datetime.now().timestamp()
     today = datetime.fromtimestamp(now).date()
-    name = (name or "today").strip().casefold()
+    if not name:
+        name = "custom" if (frm or to) else default
+    name = name.strip().casefold()
 
     if name == "custom":
         start_day = _parse_day(frm) or today
@@ -196,7 +206,76 @@ def build_blocks(store, cfg, start_ts: float, end_ts: float) -> list[dict[str, A
             )
 
     blocks.sort(key=lambda b: b["start"])
-    return blocks
+    return _apply_assignments(blocks, store.assignments(start_ts, end_ts))
+
+
+def _apply_assignments(
+    blocks: list[dict[str, Any]], assignments: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Let a label put directly on a stretch of time win over the rules.
+
+    An assignment is a window, not a block, so it rarely lines up with one.
+    A block it only partly covers is cut at the boundary, because the
+    alternative is attributing minutes the person never pointed at — and
+    that error is invisible afterwards, since the day still adds up.
+
+    Fields are taken one at a time. Assigning a client to an afternoon keeps
+    whatever categories the rules already worked out for it, which is what
+    makes assigning a client a small act rather than a destructive one.
+    """
+    if not assignments:
+        return blocks
+
+    out: list[dict[str, Any]] = []
+    for block in blocks:
+        covering = [
+            a for a in assignments
+            if a["start_ts"] < block["end"] and a["end_ts"] > block["start"]
+        ]
+        if not covering:
+            out.append(block)
+            continue
+
+        # Cut points inside this block: every assignment edge that falls
+        # strictly within it.
+        edges = {block["start"], block["end"]}
+        for a in covering:
+            for edge in (a["start_ts"], a["end_ts"]):
+                if block["start"] < edge < block["end"]:
+                    edges.add(edge)
+        cuts = sorted(edges)
+
+        for left, right in zip(cuts, cuts[1:]):
+            piece = _slice_block(block, left, right)
+            middle = (left + right) / 2
+            match = next(
+                (a for a in covering if a["start_ts"] <= middle < a["end_ts"]), None
+            )
+            if match:
+                for field in ("client", "project", "category"):
+                    if match[field]:
+                        piece[field] = match[field]
+                piece["assignment_id"] = match["id"]
+                piece["assigned"] = True
+            out.append(piece)
+
+    out.sort(key=lambda b: b["start"])
+    return out
+
+
+def _slice_block(block: dict[str, Any], start: float, end: float) -> dict[str, Any]:
+    """A shorter copy of a block, with the countable parts scaled to match."""
+    if start <= block["start"] and end >= block["end"]:
+        return dict(block)
+    piece = dict(block)
+    seconds = end - start
+    share = seconds / max(1e-6, block["seconds"])
+    piece["start"] = start
+    piece["end"] = end
+    piece["seconds"] = seconds
+    for field in ("keys", "clicks", "scrolls"):
+        piece[field] = int(round((block.get(field) or 0) * share))
+    return piece
 
 
 def _make_block(
@@ -236,6 +315,8 @@ def _make_block(
         "project": label["project"],
         "category": label["category"],
         "rule_ids": label["rule_ids"],
+        "assigned": False,
+        "assignment_id": None,
         "keys": 0,
         "clicks": 0,
         "scrolls": 0,

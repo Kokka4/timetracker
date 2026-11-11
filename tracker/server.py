@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
-from . import analytics, pause as pause_mod, rules as rules_mod, taxonomy
+from . import analytics, pause as pause_mod, report as report_mod, rules as rules_mod, taxonomy
 
 MAX_BODY = 256 * 1024
 EXTENSION_ORIGINS = (
@@ -59,7 +59,7 @@ class Context:
 
 def _summary(ctx: Context, params: dict[str, list[str]]) -> dict[str, Any]:
     window = analytics.resolve_range(
-        (params.get("range") or ["today"])[0],
+        (params.get("range") or [None])[0],
         (params.get("from") or [None])[0],
         (params.get("to") or [None])[0],
     )
@@ -249,13 +249,27 @@ def make_handler(ctx: Context):
                 if path == "/api/summary":
                     return self._json(_summary(ctx, params))
                 if path == "/api/rules":
-                    return self._json({"ok": True, "rules": ctx.store.rules(False)})
+                    return self._json({
+                        "ok": True,
+                        "rules": ctx.store.rules(False),
+                        # Rules carrying no pattern match nothing and look
+                        # exactly like rules nothing has reached yet.
+                        "dead": len(ctx.store.dead_rules()),
+                    })
                 if path == "/api/taxonomy":
                     return self._json(self._taxonomy())
                 if path == "/api/labels":
                     return self._json(self._labels())
+                if path == "/api/removable":
+                    return self._removable(params)
+                if path == "/api/blocks":
+                    return self._blocks(params)
+                if path == "/api/rule-preview":
+                    return self._rule_preview(params)
                 if path == "/api/export.csv":
                     return self._export(params)
+                if path == "/api/report.html":
+                    return self._report(params)
                 return self._error(404, f"unknown endpoint: {path}")
             except BrokenPipeError:
                 return
@@ -340,9 +354,10 @@ def make_handler(ctx: Context):
 
         def _export(self, params: dict[str, list[str]]) -> None:
             window = analytics.resolve_range(
-                (params.get("range") or ["week"])[0],
+                (params.get("range") or [None])[0],
                 (params.get("from") or [None])[0],
                 (params.get("to") or [None])[0],
+                default="week",
             )
             blocks = analytics.build_blocks(
                 ctx.store, ctx.cfg, window["start_ts"], window["end_ts"]
@@ -357,6 +372,50 @@ def make_handler(ctx: Context):
                 buffer.getvalue().encode("utf-8"),
                 "text/csv; charset=utf-8",
                 {"Content-Disposition": f'attachment; filename="{name}"'},
+            )
+
+        def _report(self, params: dict[str, list[str]]) -> None:
+            """One self-contained HTML file: the PDF path runs through the
+            browser's own print engine, which is already excellent and
+            already installed."""
+            window = analytics.resolve_range(
+                (params.get("range") or [None])[0],
+                (params.get("from") or [None])[0],
+                (params.get("to") or [None])[0],
+                default="week",
+            )
+            blocks = analytics.build_blocks(
+                ctx.store, ctx.cfg, window["start_ts"], window["end_ts"]
+            )
+            summary = analytics.summarize(
+                blocks,
+                ctx.store.afk_rows(window["start_ts"], window["end_ts"]),
+                window,
+                review_min_seconds=ctx.cfg.review_min,
+            )
+            # The dashboard's own colours, so a printed report and the screen
+            # it came from do not disagree about which client is which.
+            colours: dict[str, str] = {}
+            for row in ctx.store.categories() + ctx.store.clients():
+                slot = row.get("color")
+                if slot and slot.startswith("s") and slot[1:].isdigit():
+                    index = int(slot[1:]) - 1
+                    if 0 <= index < len(report_mod.SLOTS):
+                        colours[row["name"]] = report_mod.SLOTS[index]
+
+            detail = None
+            if (params.get("detail") or ["0"])[0] in ("1", "true", "yes"):
+                detail = [b for b in blocks if b["seconds"] >= 60][:2000]
+
+            page = report_mod.render(summary, window, colours, detail)
+            name = f"time-report-{window['start_date']}-to-{window['end_date']}.html"
+            disposition = "attachment" if (
+                params.get("download") or ["0"])[0] in ("1", "true", "yes") else "inline"
+            self._send(
+                200,
+                page.encode("utf-8"),
+                "text/html; charset=utf-8",
+                {"Content-Disposition": f'{disposition}; filename="{name}"'},
             )
 
         # -- POST --------------------------------------------------------
@@ -395,6 +454,15 @@ def make_handler(ctx: Context):
                 if path == "/api/welcome":
                     ctx.store.set_meta("welcomed", str(int(time.time())))
                     return self._json({"ok": True})
+                if path == "/api/delete":
+                    return self._delete_time()
+                if path == "/api/rules/dead":
+                    removed = ctx.store.delete_dead_rules()
+                    return self._json({"ok": True, "removed": removed})
+                if path == "/api/assign":
+                    return self._assign()
+                if path == "/api/unassign":
+                    return self._assign(clearing=True)
                 if path == "/api/categories":
                     return self._create_named("category")
                 if path == "/api/clients":
@@ -466,7 +534,8 @@ def make_handler(ctx: Context):
         def _create_rule(self) -> None:
             payload = self._body()
             if not any(
-                payload.get(f"match_{field}") for field in rules_mod.FIELDS
+                payload.get(f"match_{field}")
+                for field in rules_mod.FIELDS + (rules_mod.ANY_FIELD,)
             ):
                 return self._error(400, "a rule needs at least one match_* pattern")
             if not (
@@ -480,6 +549,258 @@ def make_handler(ctx: Context):
                 return self._error(400, f"bad pattern: {probe.error}")
             rule_id = ctx.store.add_rule(payload)
             self._json({"ok": True, "id": rule_id})
+
+        def _rule_preview(self, params: dict[str, list[str]]) -> None:
+            """What a rule would claim, before it exists.
+
+            A rule rewrites the whole history the instant it is saved,
+            because classification is computed when you look. That is the
+            best thing about this design and the most alarming: a keyword
+            that is one letter too short quietly reassigns a month. So the
+            form shows the answer first, measured against what is actually
+            recorded, with real examples rather than a count on its own.
+            """
+            one = lambda k, d=None: (params.get(k) or [d])[0]  # noqa: E731
+            draft = {
+                "id": 0,
+                "priority": 20,
+                "match_mode": one("mode", "text"),
+                "client": one("client"),
+                "category": one("category"),
+            }
+            for field in rules_mod.FIELDS + (rules_mod.ANY_FIELD,):
+                value = one(f"match_{field}")
+                if value:
+                    draft[f"match_{field}"] = value
+
+            probe = rules_mod.Rule(draft)
+            if probe.error:
+                return self._json({"ok": False, "error": probe.error})
+            if not probe.patterns and probe.anywhere is None:
+                return self._json({"ok": True, "seconds": 0, "blocks": 0,
+                                   "examples": [], "empty": True})
+
+            window = analytics.resolve_range(one("range", "month"))
+            blocks = analytics.build_blocks(
+                ctx.store, ctx.cfg, window["start_ts"], window["end_ts"]
+            )
+
+            seconds = 0.0
+            hit = 0
+            taken: dict[str, float] = {}
+            examples: list[dict[str, Any]] = []
+            for block in blocks:
+                signature = {
+                    "app": block["app"], "title": block["title"],
+                    "domain": block["domain"], "url": block["url"],
+                }
+                if not probe.matches(signature):
+                    continue
+                hit += 1
+                seconds += block["seconds"]
+                # What it would take from somebody else. A keyword that
+                # claims time already attributed is the mistake worth seeing.
+                if block["client"] and block["client"] != draft.get("client"):
+                    taken[block["client"]] = taken.get(block["client"], 0.0) + block["seconds"]
+                if len(examples) < 6:
+                    examples.append({
+                        "when": block["start"],
+                        "seconds": block["seconds"],
+                        "what": block["domain"] or block["app"],
+                        "title": block["title"],
+                        "client": block["client"],
+                        "category": block["category"],
+                    })
+
+            total = sum(b["seconds"] for b in blocks) or 1.0
+            return self._json({
+                "ok": True,
+                "range": window["name"],
+                "seconds": seconds,
+                "blocks": hit,
+                "share": seconds / total,
+                "examples": examples,
+                "taken_from": [
+                    {"client": k, "seconds": v}
+                    for k, v in sorted(taken.items(), key=lambda kv: -kv[1])[:4]
+                ],
+            })
+
+        # -- assigning a stretch of time ---------------------------------
+
+        def _assign(self, clearing: bool = False) -> None:
+            payload = self._body()
+            window = self._delete_window(payload.get("start"), payload.get("end"))
+            if window is None:
+                return
+            start, end = window
+
+            if clearing:
+                removed = ctx.store.clear_assignments(start, end)
+                return self._json({"ok": True, "cleared": removed})
+
+            client = (payload.get("client") or "").strip() or None
+            category = (payload.get("category") or "").strip() or None
+            if not client and not category:
+                return self._error(400, "nothing to assign it to")
+
+            # A name typed here becomes a managed record, exactly as it does
+            # when it is typed into the review panel. Otherwise a client
+            # could exist only inside an assignment and never be renameable.
+            created: dict[str, str] = {}
+            if category and not ctx.store.category_named(category):
+                ctx.store.add_category(category, color=taxonomy.slot_for(category))
+                created["category"] = category
+            if client and not ctx.store.client_named(client):
+                ctx.store.add_client(client)
+                created["client"] = client
+
+            assignment_id = ctx.store.add_assignment(
+                start, end, client=client, category=category
+            )
+            return self._json({
+                "ok": True,
+                "id": assignment_id,
+                "start": start,
+                "end": end,
+                "client": client,
+                "category": category,
+                "created": created,
+            })
+
+        def _blocks(self, params: dict[str, list[str]]) -> None:
+            """Every block in a window, for the day page.
+
+            The strip draws one rectangle per block and a real day has
+            hundreds, most of them a pixel wide. This is the same data as a
+            list, which is the only form in which it can be read or acted
+            on.
+            """
+            window = analytics.resolve_range(
+                (params.get("range") or [None])[0],
+                (params.get("from") or [None])[0],
+                (params.get("to") or [None])[0],
+            )
+            blocks = analytics.build_blocks(
+                ctx.store, ctx.cfg, window["start_ts"], window["end_ts"]
+            )
+            try:
+                floor = float((params.get("min") or ["0"])[0])
+            except ValueError:
+                floor = 0.0
+            kept = [b for b in blocks if b["seconds"] >= floor]
+            return self._json({
+                "ok": True,
+                "window": window,
+                "total": len(blocks),
+                "shown": len(kept),
+                "blocks": [
+                    {
+                        k: b[k] for k in (
+                            "start", "end", "seconds", "app", "title", "domain",
+                            "url", "client", "category", "project", "is_browser",
+                            "assigned", "assignment_id",
+                        )
+                    }
+                    for b in kept
+                ],
+            })
+
+        # -- removing time -----------------------------------------------
+
+        def _delete_window(self, start_raw, end_raw) -> tuple[float, float] | None:
+            """Sanity-check a window, or send the error and return None.
+
+            Takes the two raw values rather than a container, because a query
+            string hands them over as one-element lists and a JSON body hands
+            them over bare, and a helper that tries to tell those apart by
+            inspecting the container is a helper that silently picks wrong.
+            """
+            try:
+                start = float(start_raw)
+                end = float(end_raw)
+            except (TypeError, ValueError):
+                self._error(400, "start and end must be unix timestamps")
+                return None
+            if not (start < end):
+                self._error(400, "the window must end after it starts")
+                return None
+            # A window reaching into the future would delete time that has
+            # not happened, and would race the watcher for the block it is
+            # recording right now.
+            end = min(end, time.time())
+            if not (start < end):
+                self._error(400, "that window is entirely in the future")
+                return None
+            return start, end
+
+        def _removable(self, params: dict[str, list[str]]) -> None:
+            """What a delete would take, described the way the page describes
+            everything else, so the preview and the dashboard agree."""
+            window = self._delete_window(
+                (params.get("start") or [None])[0],
+                (params.get("end") or [None])[0],
+            )
+            if window is None:
+                return
+            start, end = window
+            blocks = analytics.build_blocks(ctx.store, ctx.cfg, start, end)
+            groups: dict[str, float] = {}
+            for block in blocks:
+                label = analytics._display_label(block)
+                groups[label] = groups.get(label, 0.0) + block["seconds"]
+            top = sorted(groups.items(), key=lambda kv: -kv[1])[:8]
+            # Summed from the blocks, not from the rows. A browser event sits
+            # inside the desktop event for the browser that was frontmost, so
+            # adding the two tables counts that stretch twice and the preview
+            # would promise to remove twice the time the day shows.
+            return self._json({
+                "ok": True,
+                "start": start,
+                "end": end,
+                "seconds": sum(b["seconds"] for b in blocks),
+                "blocks": len(blocks),
+                "top": [{"label": k, "seconds": v} for k, v in top],
+            })
+
+        def _delete_time(self) -> None:
+            payload = self._body()
+            window = self._delete_window(payload.get("start"), payload.get("end"))
+            if window is None:
+                return
+            start, end = window
+
+            # Settle the recording before editing it. The open block is a row
+            # in the database, so trimming it and leaving the watcher holding
+            # its id would see the next tick push it straight back.
+            if ctx.watcher is not None:
+                end = min(end, ctx.watcher.flush())
+            elif ctx.ingest is not None:
+                ctx.ingest.close_all()
+            if not (start < end):
+                return self._error(400, "nothing in that window to remove")
+
+            # Measured the same way the preview measured it, so the figure
+            # reported back matches the one that was agreed to.
+            blocks = analytics.build_blocks(ctx.store, ctx.cfg, start, end)
+            shown = sum(b["seconds"] for b in blocks)
+            backup = ctx.store.backup_before_delete()
+            result = ctx.store.delete_range(start, end)
+            result["seconds"] = shown
+            print(
+                f"[delete] removed {result['seconds'] / 60:.1f} min"
+                f" between {start:.0f} and {end:.0f}"
+                f" ({result['deleted']} dropped, {result['clipped']} trimmed,"
+                f" {result['split']} split)",
+                flush=True,
+            )
+            return self._json({
+                "ok": True,
+                **result,
+                "start": start,
+                "end": end,
+                "backup": str(backup) if backup else None,
+            })
 
         def _label_block(self) -> None:
             payload = self._body()

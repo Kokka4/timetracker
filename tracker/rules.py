@@ -26,6 +26,24 @@ from typing import Any, Iterable
 
 FIELDS = ("app", "title", "domain", "url")
 
+# `match_any` is checked against all four and matches if any one of them
+# does. The four named fields AND together, which is exactly right for "this
+# app, showing this title" and useless for "anything mentioning Hanval",
+# because a client's name turns up in a window title on Monday, in a URL on
+# Tuesday and in a filename on Wednesday.
+ANY_FIELD = "any"
+
+
+def as_pattern(raw: str, mode: str) -> str:
+    """What actually gets compiled.
+
+    A phrase is escaped. Without this, `C++`, `(draft)` and `a.b` are either
+    invalid patterns, which disable the rule, or valid ones that match the
+    wrong thing — and both failures are silent, because a rule that matches
+    nothing looks exactly like a rule nobody has reached yet.
+    """
+    return re.escape(raw) if mode == "text" else raw
+
 # Starter rules, inserted once into an empty database. These label *categories*
 # only. Client labels are yours to add, and the dashboard's review panel writes
 # them for you one click at a time.
@@ -107,6 +125,8 @@ class Rule:
         "id",
         "priority",
         "patterns",
+        "anywhere",
+        "mode",
         "client",
         "project",
         "category",
@@ -121,29 +141,46 @@ class Rule:
         self.category = row.get("category") or None
         self.error: str | None = None
         self.patterns: dict[str, re.Pattern[str]] = {}
+        self.anywhere: re.Pattern[str] | None = None
+        self.mode = "text" if str(row.get("match_mode") or "regex") == "text" else "regex"
 
-        for field in FIELDS:
+        for field in FIELDS + (ANY_FIELD,):
             raw = row.get(f"match_{field}")
             if not raw:
                 continue
             try:
-                self.patterns[field] = re.compile(str(raw), re.IGNORECASE)
+                compiled = re.compile(as_pattern(str(raw), self.mode), re.IGNORECASE)
             except re.error as exc:
                 self.error = f"{field}: {exc}"
                 self.patterns = {}
+                self.anywhere = None
                 break
+            if field == ANY_FIELD:
+                self.anywhere = compiled
+            else:
+                self.patterns[field] = compiled
 
     @property
     def usable(self) -> bool:
-        return self.error is None and bool(self.patterns) and bool(
+        return self.error is None and (bool(self.patterns) or self.anywhere) and bool(
             self.client or self.project or self.category
         )
 
     def matches(self, signature: dict[str, Any]) -> bool:
+        # The named fields AND: every one the rule sets has to match.
         for field, pattern in self.patterns.items():
             value = signature.get(field)
             if not value or not pattern.search(str(value)):
                 return False
+        # `any` ORs: one hit anywhere is enough. A rule may set both, in
+        # which case the keyword narrows an already specific rule rather
+        # than widening it.
+        if self.anywhere is not None:
+            for field in FIELDS:
+                value = signature.get(field)
+                if value and self.anywhere.search(str(value)):
+                    return True
+            return False
         return True
 
 
