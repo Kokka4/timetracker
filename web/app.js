@@ -1893,6 +1893,15 @@ function dayRow(block) {
   if (block.manual) {
     now.appendChild(h("span", { class: "chip faint", text: "added by hand" }));
   }
+  if (block.inferred) {
+    // Chrome stopped reporting mid-read; the page comes from the reports
+    // either side. Worth saying so on the row rather than only in a footer.
+    now.appendChild(h("span", {
+      class: "chip faint", text: "page inferred",
+      title: "The extension went quiet here. The page is taken from the "
+           + "reports before and after, not from a report of its own.",
+    }));
+  }
   row.appendChild(now);
 
   const category = h("input", {

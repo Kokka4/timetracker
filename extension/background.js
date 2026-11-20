@@ -20,6 +20,8 @@ const DEFAULTS = {
 };
 
 const HEARTBEAT_ALARM = "heartbeat";
+// Only drives chrome.idle.onStateChanged, which sends a report when you
+// leave or come back. It is NOT a gate on reporting: see report().
 const IDLE_SECONDS = 60;
 const MIN_POST_GAP_MS = 700;
 const REPEAT_AFTER_MS = 20000;
@@ -206,15 +208,6 @@ async function currentTab() {
   }
 }
 
-async function userIsActive() {
-  try {
-    const state = await chrome.idle.queryState(IDLE_SECONDS);
-    return state === "active";
-  } catch (_) {
-    return true; // the desktop watcher is the authority on this anyway
-  }
-}
-
 async function report(reason, force = false) {
   const config = await settings();
 
@@ -225,8 +218,16 @@ async function report(reason, force = false) {
      second line, not the first. */
   if (await isPaused()) return;
 
-  let { focused, tab } = await currentTab();
-  if (focused && !(await userIsActive())) focused = false;
+  /* No idle gate here, deliberately. This used to stop reporting once
+     chrome.idle called you idle after 60 seconds, while the tracker's own
+     idle threshold is 180. Reading a page for more than a minute without
+     touching anything put the two out of step: the extension went quiet,
+     the desktop watcher kept counting, and the time arrived with no URL on
+     it. That band was 15% of all Chrome time. The watcher is the authority
+     on whether you are here, as the old code's own comment admitted, and it
+     closes the desktop interval when you are not, so a report sent while
+     you are away pairs with nothing and costs nothing. */
+  const { focused, tab } = await currentTab();
 
   const activity = await drainActivity(tab ? tab.id : null);
   const busy = activity.keys || activity.clicks || activity.scrolls || activity.media;

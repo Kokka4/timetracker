@@ -140,6 +140,68 @@ def _browser_matches(event_browser: str | None, app_browser: str) -> bool:
     return a == b or a in b or b in a
 
 
+def _bridge(
+    segments: list[tuple[float, float, dict[str, Any]]],
+    span_start: float,
+    span_end: float,
+    limit: float,
+) -> list[tuple[float, float, dict[str, Any] | None, bool]]:
+    """Fill the holes the extension left, without inventing evidence.
+
+    Chrome evicts an idle service worker, so while you read one page and touch
+    nothing the heartbeat stops and the interval closes at the last beat. The
+    desktop watcher keeps counting, so the time survives but arrives with no
+    URL on it: 12 hours of "Google Chrome" and nothing else.
+
+    A hole is attributed to the page *before* it, because the extension
+    reports a tab switch the instant it happens. So a hole is almost never
+    lag after arriving somewhere new; it is the tail of where you already
+    were, closed off at its last heartbeat.
+
+    How much of a hole can be claimed depends on the evidence either side:
+
+    * the same page reported after it as before: the whole hole, however
+      long. You were on that page at both ends and the window never left
+      the front, so there is nothing else you could have been doing.
+    * anything else, including the run-up to the first report and the tail
+      after the last: at most `limit`, one heartbeat window, which is the
+      same bound ingest already uses when it closes a stale interval.
+
+    Beyond that the hole stays a hole. Returns (start, end, tab, inferred).
+    """
+    if not segments:
+        return []
+    if limit <= 0:
+        # Off means off. Bilateral evidence is strong, but someone who sets
+        # this to zero is asking to see the holes, not to be reassured about
+        # them, and a knob that still does some of the thing is a trap.
+        return [(s, e, tab, False) for s, e, tab in segments]
+
+    out: list[tuple[float, float, dict[str, Any] | None, bool]] = []
+
+    # Nothing precedes the first report, so this one leans forward.
+    lead = segments[0][0] - span_start
+    if lead > 0 and limit > 0:
+        take = min(lead, limit)
+        out.append((segments[0][0] - take, segments[0][0], segments[0][2], True))
+
+    for index, (seg_start, seg_end, tab) in enumerate(segments):
+        out.append((seg_start, seg_end, tab, False))
+        after = segments[index + 1] if index + 1 < len(segments) else None
+        edge = after[0] if after else span_end
+        hole = edge - seg_end
+        if hole <= 0:
+            continue
+        here = (tab or {}).get("domain")
+        there = (after[2] or {}).get("domain") if after else None
+        if after is not None and here and here == there:
+            out.append((seg_end, edge, tab, True))          # bilateral evidence
+        elif limit > 0:
+            out.append((seg_end, min(edge, seg_end + limit), tab, True))
+
+    return out
+
+
 def build_blocks(store, cfg, start_ts: float, end_ts: float) -> list[dict[str, Any]]:
     """Desktop intervals, cut by browser intervals, each one classified."""
     desktop = store.desktop_events(start_ts, end_ts)
@@ -185,8 +247,12 @@ def build_blocks(store, cfg, start_ts: float, end_ts: float) -> list[dict[str, A
         segments = collect(strict=True) or collect(strict=False)
         segments.sort(key=lambda s: s[0])
 
+        bridged = _bridge(
+            segments, span_start, span_end, getattr(cfg, "browser_bridge", 0.0)
+        )
+
         cursor = span_start
-        for seg_start, seg_end, candidate in segments:
+        for seg_start, seg_end, candidate, inferred in bridged:
             if seg_start > cursor:
                 blocks.append(
                     _make_block(cursor, seg_start, event, None, rule_list, browser_label)
@@ -195,7 +261,8 @@ def build_blocks(store, cfg, start_ts: float, end_ts: float) -> list[dict[str, A
             if seg_end > piece_start:
                 blocks.append(
                     _make_block(
-                        piece_start, seg_end, event, candidate, rule_list, browser_label
+                        piece_start, seg_end, event, candidate, rule_list,
+                        browser_label, inferred=inferred,
                     )
                 )
             cursor = max(cursor, seg_end)
@@ -292,6 +359,7 @@ def _manual_block(entry: dict[str, Any], start: float, end: float) -> dict[str, 
         "is_browser": False,
         "browser": None,
         "untracked_tab": False,
+        "inferred": False,
         "keys": 0,
         "clicks": 0,
         "scrolls": 0,
@@ -386,6 +454,7 @@ def _make_block(
     tab: dict[str, Any] | None,
     rule_list: list[rules_mod.Rule],
     browser_label: str | None,
+    inferred: bool = False,
 ) -> dict[str, Any]:
     seconds = end - start
     domain = tab["domain"] if tab else None
@@ -412,6 +481,9 @@ def _make_block(
         "is_browser": bool(browser_label),
         "browser": browser_label,
         "untracked_tab": bool(browser_label) and tab is None,
+        # The page is inferred from the reports either side of a hole in the
+        # extension's coverage, not measured. Never present it as measured.
+        "inferred": bool(inferred),
         "client": label["client"],
         "project": label["project"],
         "category": label["category"],
@@ -426,7 +498,7 @@ def _make_block(
         "media": 0,
     }
 
-    if tab:
+    if tab and not inferred:
         full = max(1e-6, tab["end_ts"] - tab["start_ts"])
         share = min(1.0, seconds / full)
         block["keys"] = int(round((tab["keys"] or 0) * share))
@@ -587,6 +659,13 @@ def summarize(
         # answer.
         "manual_seconds": round(
             sum(b["seconds"] for b in blocks if b.get("manual")), 1
+        ),
+        # Browser time whose page was worked out from the reports either side
+        # of a hole in the extension's coverage, rather than reported. Same
+        # reason as above: the share of the day that was actually observed
+        # has to stay a question with an answer.
+        "inferred_seconds": round(
+            sum(b["seconds"] for b in blocks if b.get("inferred")), 1
         ),
         "block_count": len(blocks),
         "client_seconds": round(client_work, 1),

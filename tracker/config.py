@@ -23,6 +23,10 @@ DEFAULTS: dict[str, Any] = {
     "review_min_seconds": 60,
     "capture_window_titles": True,
     "browser_heartbeat_timeout_seconds": 90,
+    # Chrome evicts an idle MV3 service worker, so the extension stops
+    # reporting while you read one page without touching a tab. Set to 0
+    # to count none of that time and leave the holes visible.
+    "browser_bridge_seconds": 90,
     "strip_query_strings": True,
     "store_full_urls": True,
     "excluded_apps": [],
@@ -77,6 +81,7 @@ class Config:
         self.browser_timeout: float = max(
             15.0, float(merged["browser_heartbeat_timeout_seconds"])
         )
+        self.browser_bridge: float = max(0.0, float(merged["browser_bridge_seconds"]))
         self.strip_query: bool = bool(merged["strip_query_strings"])
         self.store_full_urls: bool = bool(merged["store_full_urls"])
 

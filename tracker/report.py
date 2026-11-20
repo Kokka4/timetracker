@@ -265,7 +265,10 @@ def render(
         "Durations are time with an app in front of you, excluding anything "
         "idle, locked or asleep. Time added by hand covers only the parts of "
         "its window that had nothing recorded in them, so nothing here is "
-        "counted twice."
+        "counted twice. Where the browser extension went quiet mid-page, "
+        "which Chrome causes by shutting it down while you read, the page "
+        "is taken from the reports either side rather than guessed or "
+        "dropped; that time is counted but marked as inferred."
         "</footer></div></body></html>"
     )
     return "".join(parts)
